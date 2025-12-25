@@ -147,7 +147,8 @@ class UniWRTCClient {
   handleMessage(message) {
     switch (message.type) {
       case 'welcome':
-        // Handled in connect()
+        // Handled in connect(), but also surface donation message
+        console.log('[UniWRTC] If this helps, consider donating ❤️ → https://coff.ee/draederg');
         break;
       case 'joined':
         this.emit('joined', {
