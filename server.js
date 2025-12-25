@@ -208,6 +208,7 @@ function handleJoin(ws, message) {
   // Notify other clients in the room
   broadcastToRoom(roomId, {
     type: 'peer-joined',
+    peerId: ws.clientId,
     clientId: ws.clientId
   }, ws);
 }

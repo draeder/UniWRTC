@@ -1,0 +1,16 @@
+{
+  "name": "uniwrtc-cloudflare",
+  "version": "1.0.0",
+  "description": "UniWRTC Cloudflare Workers deployment",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler publish",
+    "deploy-prod": "wrangler publish --env production",
+    "tail": "wrangler tail",
+    "tail-prod": "wrangler tail --env production"
+  },
+  "devDependencies": {
+    "wrangler": "^3.26.0"
+  }
+}

@@ -1,16 +1,23 @@
 /**
- * UniWRTC Client - WebRTC Signaling Client Library
+ * UniWRTC Client - Updated for Cloudflare deployment
+ * WebRTC Signaling Client Library
  * Browser-only version
  */
 
 class UniWRTCClient {
   constructor(serverUrl, options = {}) {
-    this.serverUrl = serverUrl;
+    // Support both direct URLs and room parameter format
+    if (!serverUrl.includes('?')) {
+      const roomId = options.roomId || 'default';
+      this.serverUrl = serverUrl + (serverUrl.endsWith('/') ? '' : '/') + `signaling?room=${roomId}`;
+    } else {
+      this.serverUrl = serverUrl;
+    }
+    
     this.ws = null;
     this.clientId = null;
-    this.roomId = null;
+    this.roomId = options.roomId || 'default';
     this.peers = new Map();
-    this._connectedOnce = false;
     this.options = {
       autoReconnect: true,
       reconnectDelay: 3000,
@@ -33,7 +40,15 @@ class UniWRTCClient {
   connect() {
     return new Promise((resolve, reject) => {
       try {
-        this.ws = new WebSocket(this.serverUrl);
+        // Convert https to wss, http to ws
+        let wsUrl = this.serverUrl;
+        if (wsUrl.startsWith('https://')) {
+          wsUrl = 'wss://' + wsUrl.substring(8);
+        } else if (wsUrl.startsWith('http://')) {
+          wsUrl = 'ws://' + wsUrl.substring(7);
+        }
+
+        this.ws = new WebSocket(wsUrl);
 
         this.ws.onopen = () => {
           console.log('Connected to signaling server');
@@ -52,9 +67,8 @@ class UniWRTCClient {
             const message = JSON.parse(event.data);
             this.handleMessage(message);
 
-            if (message.type === 'welcome' && !this._connectedOnce) {
+            if (message.type === 'welcome') {
               this.clientId = message.clientId;
-              this._connectedOnce = true;
               this.emit('connected', { clientId: this.clientId });
               resolve(this.clientId);
             }
@@ -95,19 +109,11 @@ class UniWRTCClient {
 
   joinRoom(roomId) {
     this.roomId = roomId;
-    this.send({
-      type: 'join',
-      roomId: roomId,
-      peerId: this.clientId
-    });
+    // Durable Objects handle room joining automatically via room parameter
   }
 
   leaveRoom() {
     if (this.roomId) {
-      this.send({
-        type: 'leave',
-        roomId: this.roomId
-      });
       this.roomId = null;
     }
   }
@@ -124,8 +130,7 @@ class UniWRTCClient {
     this.send({
       type: 'offer',
       offer: offer,
-      targetId: targetId,
-      roomId: this.roomId
+      targetId: targetId
     });
   }
 
@@ -133,8 +138,7 @@ class UniWRTCClient {
     this.send({
       type: 'answer',
       answer: answer,
-      targetId: targetId,
-      roomId: this.roomId
+      targetId: targetId
     });
   }
 
@@ -142,15 +146,13 @@ class UniWRTCClient {
     this.send({
       type: 'ice-candidate',
       candidate: candidate,
-      targetId: targetId,
-      roomId: this.roomId
+      targetId: targetId
     });
   }
 
   listRooms() {
-    this.send({
-      type: 'list-rooms'
-    });
+    // Durable Objects don't expose room listing
+    console.log('Room listing not available with Durable Objects');
   }
 
   on(event, handler) {
@@ -187,20 +189,17 @@ class UniWRTCClient {
         this.roomId = message.roomId;
         this.emit('joined', {
           roomId: message.roomId,
-          peerId: message.peerId,
           clientId: message.clientId,
           clients: message.clients
         });
         break;
       case 'peer-joined':
         this.emit('peer-joined', {
-          peerId: message.peerId || message.clientId,
           clientId: message.clientId
         });
         break;
       case 'peer-left':
         this.emit('peer-left', {
-          peerId: message.peerId || message.clientId,
           clientId: message.clientId
         });
         break;

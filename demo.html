@@ -270,7 +270,7 @@
             </div>
 
             <div class="connection-controls">
-                <input type="text" id="serverUrl" placeholder="ws://localhost:8080" value="ws://localhost:8080">
+                <input type="text" id="serverUrl" placeholder="wss://signal.peer.ooo" value="wss://signal.peer.ooo">
                 <input type="text" id="customPeerId" placeholder="Custom Peer ID (optional)">
                 <button class="btn-primary" id="connectBtn" onclick="connect()">Connect</button>
             </div>
@@ -451,48 +451,50 @@
                     updateStatus(false);
                 });
 
+                // Track known peers
+                let knownPeers = [];
+
                 client.on('joined', (data) => {
                     log(`Joined room: ${data.roomId}`, 'success');
-                    updatePeersList(data.clients);
+                    knownPeers = data.clients || [];
+                    updatePeersList(knownPeers);
                     
                     // Update room info with dynamic peer count
-                    updateRoomInfo(data.roomId, data.clientId);
+                    updateRoomInfo(data.roomId, data.peerId || client.clientId);
                 });
 
                 client.on('peer-joined', (data) => {
-                    log(`Peer joined: ${data.clientId}`, 'success');
-                    // Update peers list
-                    const currentPeers = Array.from(peersList.children).map(el => 
-                        el.textContent.trim()
-                    );
-                    currentPeers.push(data.clientId);
-                    updatePeersList(currentPeers);
+                    log(`Peer joined: ${data.peerId}`, 'success');
+                    // Add to known peers if not already there
+                    if (data.peerId && !knownPeers.includes(data.peerId)) {
+                        knownPeers.push(data.peerId);
+                        updatePeersList(knownPeers);
+                    }
                     
                     // Update room info with new peer count
                     updateRoomInfo(client.roomId, client.clientId);
                     
                     // Auto-initiate P2P connection
                     setTimeout(() => {
-                        createPeerConnection(data.clientId, true);
+                        createPeerConnection(data.peerId, true);
                     }, 500);
                 });
 
                 client.on('peer-left', (data) => {
-                    log(`Peer left: ${data.clientId}`, 'warning');
-                    // Update peers list
-                    const currentPeers = Array.from(peersList.children)
-                        .map(el => el.textContent.trim())
-                        .filter(id => id !== data.clientId);
-                    updatePeersList(currentPeers);
+                    const peerId = data.peerId || data.clientId;
+                    log(`Peer left: ${peerId}`, 'warning');
+                    // Remove from known peers
+                    knownPeers = knownPeers.filter(id => id !== peerId);
+                    updatePeersList(knownPeers);
                     
                     // Update room info with new peer count
                     updateRoomInfo(client.roomId, client.clientId);
                     
                     // Close peer connection
-                    const pc = peerConnections.get(data.clientId);
+                    const pc = peerConnections.get(peerId);
                     if (pc) {
                         pc.close();
-                        peerConnections.delete(data.clientId);
+                        peerConnections.delete(peerId);
                     }
                 });
 
@@ -620,9 +622,9 @@
                 return peerConnections.get(peerId);
             }
 
-            // Determine who should initiate based on peer IDs
-            // The peer with lexicographically smaller ID initiates
-            const shouldInitiate = initiator && (client.clientId < peerId);
+            // Determine who should initiate based on peer IDs (lexicographic comparison)
+            // Only the peer with smaller ID creates the offer
+            const shouldInitiate = client.clientId < peerId;
 
             const pc = new RTCPeerConnection({
                 iceServers: [
