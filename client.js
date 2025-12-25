@@ -24,6 +24,7 @@ class UniWRTCClient {
       'offer': [],
       'answer': [],
       'ice-candidate': [],
+      'room-list': [],
       'error': []
     };
   }
