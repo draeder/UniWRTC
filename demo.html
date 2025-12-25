@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UniWRTC Demo - WebRTC Signaling</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .card h2 {
+            margin-bottom: 15px;
+            color: #333;
+            font-size: 1.5em;
+        }
+
+        .connection-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #d0d0d0;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-indicator.connected {
+            background: #10b981;
+            box-shadow: 0 0 10px #10b981;
+        }
+
+        .status-indicator.disconnected {
+            background: #ef4444;
+        }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            padding: 10px 15px;
+            background: #f5f5f5;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .log-container {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 6px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid #2d2d2d;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-timestamp {
+            color: #858585;
+            margin-right: 10px;
+        }
+
+        .log-type-info {
+            color: #4fc3f7;
+        }
+
+        .log-type-success {
+            color: #81c784;
+        }
+
+        .log-type-error {
+            color: #e57373;
+        }
+
+        .log-type-warning {
+            color: #ffb74d;
+        }
+
+        .peers-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .peer-item {
+            background: #f5f5f5;
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .peer-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #10b981;
+        }
+
+        .video-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .video-wrapper {
+            position: relative;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            aspect-ratio: 16/9;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .video-label {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        @media (max-width: 768px) {
+            .connection-controls {
+                grid-template-columns: 1fr;
+            }
+
+            .video-container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌐 UniWRTC Demo</h1>
+            <p>Universal WebRTC Signaling Service</p>
+        </div>
+
+        <div class="card">
+            <h2>Connection Control</h2>
+            
+            <div class="status-bar">
+                <span class="status-indicator disconnected" id="statusIndicator"></span>
+                <span id="statusText">Disconnected</span>
+            </div>
+
+            <div class="connection-controls">
+                <input type="text" id="serverUrl" placeholder="ws://localhost:8080" value="ws://localhost:8080">
+                <button class="btn-primary" id="connectBtn" onclick="connect()">Connect</button>
+                <input type="text" id="roomId" placeholder="Enter room ID" value="demo-room">
+                <button class="btn-primary" id="joinBtn" onclick="joinRoom()" disabled>Join Room</button>
+            </div>
+
+            <div style="margin-top: 15px;">
+                <button class="btn-secondary" onclick="listRooms()">List Rooms</button>
+                <button class="btn-danger" onclick="disconnect()">Disconnect</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Room Status</h2>
+            <div id="roomInfo">
+                <p style="color: #666;">Not in a room</p>
+            </div>
+            <div class="peers-list" id="peersList"></div>
+        </div>
+
+        <div class="card">
+            <h2>Activity Log</h2>
+            <div class="log-container" id="logContainer">
+                <div class="log-entry">
+                    <span class="log-timestamp">Ready</span>
+                    <span class="log-type-info">Waiting for connection...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="client.js"></script>
+    <script>
+        let client = null;
+        const logContainer = document.getElementById('logContainer');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const connectBtn = document.getElementById('connectBtn');
+        const joinBtn = document.getElementById('joinBtn');
+        const roomInfo = document.getElementById('roomInfo');
+        const peersList = document.getElementById('peersList');
+
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `
+                <span class="log-timestamp">[${timestamp}]</span>
+                <span class="log-type-${type}">${message}</span>
+            `;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        function updateStatus(connected) {
+            if (connected) {
+                statusIndicator.className = 'status-indicator connected';
+                statusText.textContent = `Connected (ID: ${client.clientId})`;
+                connectBtn.textContent = 'Connected';
+                connectBtn.disabled = true;
+                joinBtn.disabled = false;
+            } else {
+                statusIndicator.className = 'status-indicator disconnected';
+                statusText.textContent = 'Disconnected';
+                connectBtn.textContent = 'Connect';
+                connectBtn.disabled = false;
+                joinBtn.disabled = true;
+                roomInfo.innerHTML = '<p style="color: #666;">Not in a room</p>';
+                peersList.innerHTML = '';
+            }
+        }
+
+        function updatePeersList(peers) {
+            peersList.innerHTML = '';
+            if (peers.length === 0) {
+                return;
+            }
+            peers.forEach(peerId => {
+                const peerItem = document.createElement('div');
+                peerItem.className = 'peer-item';
+                peerItem.innerHTML = `
+                    <span class="peer-status"></span>
+                    <span>Peer: ${peerId}</span>
+                `;
+                peersList.appendChild(peerItem);
+            });
+        }
+
+        async function connect() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            
+            if (!serverUrl) {
+                log('Please enter a server URL', 'error');
+                return;
+            }
+
+            try {
+                log('Connecting to signaling server...', 'info');
+                client = new UniWRTCClient(serverUrl);
+
+                client.on('connected', (data) => {
+                    log(`Connected with ID: ${data.clientId}`, 'success');
+                    updateStatus(true);
+                });
+
+                client.on('disconnected', () => {
+                    log('Disconnected from server', 'warning');
+                    updateStatus(false);
+                });
+
+                client.on('joined', (data) => {
+                    log(`Joined room: ${data.roomId}`, 'success');
+                    roomInfo.innerHTML = `
+                        <p><strong>Room:</strong> ${data.roomId}</p>
+                        <p><strong>Your ID:</strong> ${data.clientId}</p>
+                        <p><strong>Peers in room:</strong> ${data.clients.length}</p>
+                    `;
+                    updatePeersList(data.clients);
+                });
+
+                client.on('peer-joined', (data) => {
+                    log(`Peer joined: ${data.clientId}`, 'success');
+                    // Update peers list
+                    const currentPeers = Array.from(peersList.children).map(el => 
+                        el.textContent.replace('Peer: ', '').trim()
+                    );
+                    currentPeers.push(data.clientId);
+                    updatePeersList(currentPeers);
+                });
+
+                client.on('peer-left', (data) => {
+                    log(`Peer left: ${data.clientId}`, 'warning');
+                    // Update peers list
+                    const currentPeers = Array.from(peersList.children)
+                        .map(el => el.textContent.replace('Peer: ', '').trim())
+                        .filter(id => id !== data.clientId);
+                    updatePeersList(currentPeers);
+                });
+
+                client.on('offer', (data) => {
+                    log(`Received offer from: ${data.senderId}`, 'info');
+                });
+
+                client.on('answer', (data) => {
+                    log(`Received answer from: ${data.senderId}`, 'info');
+                });
+
+                client.on('ice-candidate', (data) => {
+                    log(`Received ICE candidate from: ${data.senderId}`, 'info');
+                });
+
+                client.on('room-list', (data) => {
+                    log(`Available rooms: ${data.rooms.length}`, 'info');
+                    data.rooms.forEach(room => {
+                        log(`  - ${room.id} (${room.clients} clients)`, 'info');
+                    });
+                });
+
+                client.on('error', (data) => {
+                    log(`Error: ${data.message}`, 'error');
+                });
+
+                await client.connect();
+            } catch (error) {
+                log(`Connection failed: ${error.message}`, 'error');
+                updateStatus(false);
+            }
+        }
+
+        function disconnect() {
+            if (client) {
+                client.disconnect();
+                client = null;
+                log('Disconnected', 'warning');
+                updateStatus(false);
+            }
+        }
+
+        function joinRoom() {
+            const roomId = document.getElementById('roomId').value;
+            
+            if (!roomId) {
+                log('Please enter a room ID', 'error');
+                return;
+            }
+
+            if (!client) {
+                log('Not connected to server', 'error');
+                return;
+            }
+
+            log(`Joining room: ${roomId}...`, 'info');
+            client.joinRoom(roomId);
+        }
+
+        function listRooms() {
+            if (!client) {
+                log('Not connected to server', 'error');
+                return;
+            }
+
+            log('Requesting room list...', 'info');
+            client.listRooms();
+        }
+
+        // Initialize
+        updateStatus(false);
+        log('UniWRTC Demo ready', 'success');
+    </script>
+</body>
+</html>
