@@ -18,6 +18,7 @@ class UniWRTCClient {
     this.clientId = null;
     this.roomId = options.roomId || 'default';
     this.peers = new Map();
+    this._connectedOnce = false;
     this.options = {
       autoReconnect: true,
       reconnectDelay: 3000,
@@ -67,8 +68,9 @@ class UniWRTCClient {
             const message = JSON.parse(event.data);
             this.handleMessage(message);
 
-            if (message.type === 'welcome') {
+            if (message.type === 'welcome' && !this._connectedOnce) {
               this.clientId = message.clientId;
+              this._connectedOnce = true;
               this.emit('connected', { clientId: this.clientId });
               resolve(this.clientId);
             }
@@ -184,7 +186,6 @@ class UniWRTCClient {
       case 'welcome':
         this.clientId = message.clientId;
         console.log('[UniWRTC] If this helps, consider donating ❤️ → https://coff.ee/draederg');
-        this.emit('connected', { clientId: this.clientId });
         break;
       case 'joined':
         this.roomId = message.roomId;

@@ -94,6 +94,8 @@ class UniWRTCClient {
   }
 
   joinRoom(roomId) {
+    // Prevent duplicate join calls for the same room
+    if (this.roomId === roomId) return;
     this.roomId = roomId;
     this.send({
       type: 'join',
@@ -180,9 +182,9 @@ class UniWRTCClient {
   handleMessage(message) {
     switch (message.type) {
       case 'welcome':
+        // Only set clientId here; 'connected' is emitted in connect() with a guard
         this.clientId = message.clientId;
         console.log('[UniWRTC] If this helps, consider donating ❤️ → https://coff.ee/draederg');
-        this.emit('connected', { clientId: this.clientId });
         break;
       case 'joined':
         this.roomId = message.roomId;
