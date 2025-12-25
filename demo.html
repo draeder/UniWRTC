@@ -263,11 +263,16 @@
                 <span id="statusText">Disconnected</span>
             </div>
 
+            <div class="status-bar" id="myPeerIdBar" style="display: none; background: #e8f5e9; color: #2e7d32; font-weight: bold;">
+                <span>Your Peer ID: </span>
+                <span id="myPeerId" style="user-select: all; cursor: text;"></span>
+                <button class="btn-secondary" onclick="copyMyPeerId()" style="margin-left: 10px; padding: 6px 12px;">Copy</button>
+            </div>
+
             <div class="connection-controls">
                 <input type="text" id="serverUrl" placeholder="ws://localhost:8080" value="ws://localhost:8080">
+                <input type="text" id="customPeerId" placeholder="Custom Peer ID (optional)">
                 <button class="btn-primary" id="connectBtn" onclick="connect()">Connect</button>
-                <input type="text" id="roomId" placeholder="Enter room ID" value="demo-room">
-                <button class="btn-primary" id="joinBtn" onclick="joinRoom()" disabled>Join Room</button>
             </div>
 
             <div style="margin-top: 15px;">
@@ -278,13 +283,41 @@
 
         <div class="card">
             <h2>Room Status</h2>
+            
+            <div class="connection-controls" style="margin-bottom: 15px;">
+                <input type="text" id="roomId" placeholder="Enter room ID" value="demo-room">
+                <button class="btn-primary" id="joinBtn" onclick="joinRoom()" disabled>Join Room</button>
+            </div>
+            
             <div id="roomInfo">
                 <p style="color: #666;">Not in a room</p>
             </div>
-            <div class="peers-list" id="peersList"></div>
+            
+            <div style="margin-top: 15px; margin-bottom: 15px;">
+                <h3 style="font-size: 14px; margin-bottom: 10px; color: #666;">Connected Peers</h3>
+                <div class="peers-list" id="peersList"></div>
+            </div>
+            
+            <div style="margin-top: 15px;">
+                <h3 style="font-size: 14px; margin-bottom: 10px; color: #666;">Connect to Specific Peer</h3>
+                <p style="font-size: 12px; color: #999; margin-bottom: 8px;">Enter a peer's ID to establish direct P2P connection</p>
+                <div class="connection-controls">
+                    <input type="text" id="manualPeerId" placeholder="Enter peer ID">
+                    <button class="btn-primary" onclick="connectToPeer()">Connect to Peer</button>
+                </div>
+            </div>
         </div>
 
         <div class="card">
+            <h2>Chat</h2>
+            <div class="log-container" id="chatContainer" style="max-height: 250px; margin-bottom: 15px;">
+                <p style="color: #999; text-align: center; padding: 20px;">Messages will appear here</p>
+            </div>
+            <div class="connection-controls" style="margin-bottom: 0;">
+                <input type="text" id="chatMessage" placeholder="Type a message..." style="grid-column: 1 / -1;">
+                <button class="btn-primary" onclick="sendChatMessage()" style="grid-column: 1 / -1;">Send Message</button>
+            </div>
+        </div>        <div class="card">
             <h2>Activity Log</h2>
             <div class="log-container" id="logContainer">
                 <div class="log-entry">
@@ -295,9 +328,11 @@
         </div>
     </div>
 
-    <script src="client.js"></script>
+    <script src="client-browser.js"></script>
     <script>
         let client = null;
+        let peerConnections = new Map(); // Map of peerId -> RTCPeerConnection
+        let dataChannels = new Map(); // Map of peerId -> RTCDataChannel
         const logContainer = document.getElementById('logContainer');
         const statusIndicator = document.getElementById('statusIndicator');
         const statusText = document.getElementById('statusText');
@@ -319,12 +354,19 @@
         }
 
         function updateStatus(connected) {
+            const myPeerIdBar = document.getElementById('myPeerIdBar');
+            const myPeerId = document.getElementById('myPeerId');
+            
             if (connected) {
                 statusIndicator.className = 'status-indicator connected';
-                statusText.textContent = `Connected (ID: ${client.clientId})`;
+                statusText.textContent = `Connected`;
                 connectBtn.textContent = 'Connected';
                 connectBtn.disabled = true;
                 joinBtn.disabled = false;
+                
+                // Show peer ID
+                myPeerId.textContent = client.clientId;
+                myPeerIdBar.style.display = 'flex';
             } else {
                 statusIndicator.className = 'status-indicator disconnected';
                 statusText.textContent = 'Disconnected';
@@ -333,7 +375,25 @@
                 joinBtn.disabled = true;
                 roomInfo.innerHTML = '<p style="color: #666;">Not in a room</p>';
                 peersList.innerHTML = '';
+                
+                // Hide peer ID
+                myPeerIdBar.style.display = 'none';
             }
+        }
+
+        function copyMyPeerId() {
+            const peerId = document.getElementById('myPeerId').textContent;
+            navigator.clipboard.writeText(peerId);
+            log('Copied your peer ID to clipboard', 'success');
+        }
+
+        function updateRoomInfo(roomId, clientId) {
+            const peerCount = peersList.children.length;
+            roomInfo.innerHTML = `
+                <p><strong>Room:</strong> ${roomId}</p>
+                <p><strong>Your ID:</strong> ${clientId}</p>
+                <p><strong>Peers in room:</strong> ${peerCount}</p>
+            `;
         }
 
         function updatePeersList(peers) {
@@ -344,10 +404,16 @@
             peers.forEach(peerId => {
                 const peerItem = document.createElement('div');
                 peerItem.className = 'peer-item';
+                peerItem.style.cursor = 'pointer';
+                peerItem.title = 'Click to copy peer ID';
                 peerItem.innerHTML = `
                     <span class="peer-status"></span>
-                    <span>Peer: ${peerId}</span>
+                    <span>${peerId}</span>
                 `;
+                peerItem.onclick = () => {
+                    navigator.clipboard.writeText(peerId);
+                    log(`Copied peer ID: ${peerId}`, 'success');
+                };
                 peersList.appendChild(peerItem);
             });
         }
@@ -362,11 +428,22 @@
 
             try {
                 log('Connecting to signaling server...', 'info');
-                client = new UniWRTCClient(serverUrl);
+                
+                const customPeerId = document.getElementById('customPeerId').value.trim();
+                client = new UniWRTCClient(serverUrl, { customPeerId: customPeerId || null });
 
                 client.on('connected', (data) => {
                     log(`Connected with ID: ${data.clientId}`, 'success');
                     updateStatus(true);
+                    
+                    // Auto-join room after connecting
+                    const roomId = document.getElementById('roomId').value;
+                    if (roomId) {
+                        setTimeout(() => {
+                            log(`Auto-joining room: ${roomId}...`, 'info');
+                            client.joinRoom(roomId);
+                        }, 500);
+                    }
                 });
 
                 client.on('disconnected', () => {
@@ -376,43 +453,89 @@
 
                 client.on('joined', (data) => {
                     log(`Joined room: ${data.roomId}`, 'success');
-                    roomInfo.innerHTML = `
-                        <p><strong>Room:</strong> ${data.roomId}</p>
-                        <p><strong>Your ID:</strong> ${data.clientId}</p>
-                        <p><strong>Peers in room:</strong> ${data.clients.length}</p>
-                    `;
                     updatePeersList(data.clients);
+                    
+                    // Update room info with dynamic peer count
+                    updateRoomInfo(data.roomId, data.clientId);
                 });
 
                 client.on('peer-joined', (data) => {
                     log(`Peer joined: ${data.clientId}`, 'success');
                     // Update peers list
                     const currentPeers = Array.from(peersList.children).map(el => 
-                        el.textContent.replace('Peer: ', '').trim()
+                        el.textContent.trim()
                     );
                     currentPeers.push(data.clientId);
                     updatePeersList(currentPeers);
+                    
+                    // Update room info with new peer count
+                    updateRoomInfo(client.roomId, client.clientId);
+                    
+                    // Auto-initiate P2P connection
+                    setTimeout(() => {
+                        createPeerConnection(data.clientId, true);
+                    }, 500);
                 });
 
                 client.on('peer-left', (data) => {
                     log(`Peer left: ${data.clientId}`, 'warning');
                     // Update peers list
                     const currentPeers = Array.from(peersList.children)
-                        .map(el => el.textContent.replace('Peer: ', '').trim())
+                        .map(el => el.textContent.trim())
                         .filter(id => id !== data.clientId);
                     updatePeersList(currentPeers);
+                    
+                    // Update room info with new peer count
+                    updateRoomInfo(client.roomId, client.clientId);
+                    
+                    // Close peer connection
+                    const pc = peerConnections.get(data.clientId);
+                    if (pc) {
+                        pc.close();
+                        peerConnections.delete(data.clientId);
+                    }
                 });
 
-                client.on('offer', (data) => {
-                    log(`Received offer from: ${data.senderId}`, 'info');
+                client.on('offer', async (data) => {
+                    log(`Received offer from: ${data.peerId}`, 'info');
+                    try {
+                        const pc = await createPeerConnection(data.peerId, false);
+                        
+                        // Set remote description first
+                        await pc.setRemoteDescription(data.offer);
+                        
+                        // Then create and set local answer
+                        const answer = await pc.createAnswer();
+                        await pc.setLocalDescription(answer);
+                        
+                        // Send answer back
+                        client.sendAnswer(data.peerId, answer);
+                    } catch (e) {
+                        log(`Offer error: ${e.message}`, 'error');
+                    }
                 });
 
-                client.on('answer', (data) => {
-                    log(`Received answer from: ${data.senderId}`, 'info');
+                client.on('answer', async (data) => {
+                    log(`Received answer from: ${data.peerId}`, 'info');
+                    const pc = peerConnections.get(data.peerId);
+                    if (pc) {
+                        try {
+                            await pc.setRemoteDescription(data.answer);
+                        } catch (e) {
+                            log(`Answer error: ${e.message}`, 'error');
+                        }
+                    }
                 });
 
-                client.on('ice-candidate', (data) => {
-                    log(`Received ICE candidate from: ${data.senderId}`, 'info');
+                client.on('ice-candidate', async (data) => {
+                    const pc = peerConnections.get(data.peerId);
+                    if (pc && data.candidate) {
+                        try {
+                            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                        } catch (e) {
+                            log(`ICE error: ${e.message}`, 'warning');
+                        }
+                    }
                 });
 
                 client.on('room-list', (data) => {
@@ -424,6 +547,11 @@
 
                 client.on('error', (data) => {
                     log(`Error: ${data.message}`, 'error');
+                });
+
+                client.on('chat', (data) => {
+                    displayChatMessage(data.text, `${data.senderId.substring(0, 6)}...`, false);
+                    log(`Chat from ${data.senderId}: ${data.text}`, 'info');
                 });
 
                 await client.connect();
@@ -440,6 +568,24 @@
                 log('Disconnected', 'warning');
                 updateStatus(false);
             }
+        }
+
+        function connectToPeer() {
+            const peerId = document.getElementById('manualPeerId').value.trim();
+            
+            if (!peerId) {
+                log('Please enter a peer ID', 'error');
+                return;
+            }
+
+            if (!client || !client.roomId) {
+                log('Not connected to a room', 'error');
+                return;
+            }
+
+            log(`Manually connecting to peer: ${peerId}...`, 'info');
+            createPeerConnection(peerId, true);
+            document.getElementById('manualPeerId').value = '';
         }
 
         function joinRoom() {
@@ -467,6 +613,112 @@
 
             log('Requesting room list...', 'info');
             client.listRooms();
+        }
+
+        async function createPeerConnection(peerId, initiator = false) {
+            if (peerConnections.has(peerId)) {
+                return peerConnections.get(peerId);
+            }
+
+            // Determine who should initiate based on peer IDs
+            // The peer with lexicographically smaller ID initiates
+            const shouldInitiate = initiator && (client.clientId < peerId);
+
+            const pc = new RTCPeerConnection({
+                iceServers: [
+                    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+                ]
+            });
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    log(`Sending ICE candidate to ${peerId.substring(0, 6)}...`, 'info');
+                    client.sendIceCandidate(peerId, event.candidate);
+                }
+            };
+
+            pc.ondatachannel = (event) => {
+                setupDataChannel(peerId, event.channel);
+            };
+
+            if (shouldInitiate) {
+                const dc = pc.createDataChannel('chat');
+                setupDataChannel(peerId, dc);
+                
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                client.sendOffer(peerId, offer);
+                log(`Sent offer to ${peerId.substring(0, 6)}...`, 'success');
+            }
+
+            peerConnections.set(peerId, pc);
+            return pc;
+        }
+
+        function setupDataChannel(peerId, dataChannel) {
+            dataChannel.onopen = () => {
+                log(`Data channel open with ${peerId.substring(0, 6)}...`, 'success');
+                dataChannels.set(peerId, dataChannel);
+            };
+
+            dataChannel.onmessage = (event) => {
+                displayChatMessage(event.data, `${peerId.substring(0, 6)}...`, false);
+            };
+
+            dataChannel.onclose = () => {
+                log(`Data channel closed with ${peerId.substring(0, 6)}...`, 'warning');
+                dataChannels.delete(peerId);
+            };
+
+            dataChannels.set(peerId, dataChannel);
+        }
+
+        function sendChatMessage() {
+            const message = document.getElementById('chatMessage').value.trim();
+            
+            if (!message) {
+                return;
+            }
+
+            if (dataChannels.size === 0) {
+                log('No peer connections available. Wait for data channels to open.', 'error');
+                return;
+            }
+
+            // Send to all connected peers
+            let sent = 0;
+            dataChannels.forEach((dc, peerId) => {
+                if (dc.readyState === 'open') {
+                    dc.send(message);
+                    sent++;
+                }
+            });
+
+            if (sent > 0) {
+                displayChatMessage(message, 'You', true);
+                document.getElementById('chatMessage').value = '';
+            } else {
+                log('No open connections to send message', 'error');
+            }
+        }
+
+        function displayChatMessage(message, sender, isLocal) {
+            const chatContainer = document.getElementById('chatContainer');
+            
+            // Clear placeholder if needed
+            if (chatContainer.querySelector('p')) {
+                chatContainer.innerHTML = '';
+            }
+
+            const messageEl = document.createElement('div');
+            messageEl.className = 'log-entry';
+            messageEl.style.background = isLocal ? 'rgba(16, 185, 129, 0.1)' : 'rgba(100, 116, 139, 0.1)';
+            messageEl.innerHTML = `
+                <span style="color: ${isLocal ? '#10b981' : '#64748b'}; font-weight: bold;">${sender}:</span>
+                <span style="margin-left: 8px;">${message}</span>
+            `;
+            chatContainer.appendChild(messageEl);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
         }
 
         // Initialize

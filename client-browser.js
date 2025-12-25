@@ -1,6 +1,6 @@
 /**
  * UniWRTC Client - WebRTC Signaling Client Library
- * Simplifies connection to the UniWRTC signaling server
+ * Browser-only version
  */
 
 class UniWRTCClient {
@@ -32,12 +32,18 @@ class UniWRTCClient {
   connect() {
     return new Promise((resolve, reject) => {
       try {
-        // Get WebSocket class (browser or Node.js)
-        const WSClass = typeof WebSocket !== 'undefined' ? WebSocket : require('ws');
-        this.ws = new WSClass(this.serverUrl);
+        this.ws = new WebSocket(this.serverUrl);
 
         this.ws.onopen = () => {
           console.log('Connected to signaling server');
+          
+          // Send custom peer ID if provided
+          if (this.options.customPeerId) {
+            this.send({
+              type: 'set-id',
+              customId: this.options.customPeerId
+            });
+          }
         };
 
         this.ws.onmessage = (event) => {
@@ -103,7 +109,15 @@ class UniWRTCClient {
     }
   }
 
-  sendOffer(offer, targetId = null) {
+  send(message) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(message));
+    } else {
+      console.warn('WebSocket is not connected');
+    }
+  }
+
+  sendOffer(targetId, offer) {
     this.send({
       type: 'offer',
       offer: offer,
@@ -112,7 +126,7 @@ class UniWRTCClient {
     });
   }
 
-  sendAnswer(answer, targetId) {
+  sendAnswer(targetId, answer) {
     this.send({
       type: 'answer',
       answer: answer,
@@ -121,7 +135,7 @@ class UniWRTCClient {
     });
   }
 
-  sendIceCandidate(candidate, targetId = null) {
+  sendIceCandidate(targetId, candidate) {
     this.send({
       type: 'ice-candidate',
       candidate: candidate,
@@ -134,69 +148,6 @@ class UniWRTCClient {
     this.send({
       type: 'list-rooms'
     });
-  }
-
-  send(message) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
-    } else {
-      console.error('WebSocket is not connected');
-    }
-  }
-
-  handleMessage(message) {
-    switch (message.type) {
-      case 'welcome':
-        // Handled in connect()
-        break;
-      case 'joined':
-        this.emit('joined', {
-          roomId: message.roomId,
-          clientId: message.clientId,
-          clients: message.clients
-        });
-        break;
-      case 'peer-joined':
-        this.emit('peer-joined', {
-          clientId: message.clientId
-        });
-        break;
-      case 'peer-left':
-        this.emit('peer-left', {
-          clientId: message.clientId
-        });
-        break;
-      case 'offer':
-        this.emit('offer', {
-          senderId: message.senderId,
-          offer: message.offer
-        });
-        break;
-      case 'answer':
-        this.emit('answer', {
-          senderId: message.senderId,
-          answer: message.answer
-        });
-        break;
-      case 'ice-candidate':
-        this.emit('ice-candidate', {
-          senderId: message.senderId,
-          candidate: message.candidate
-        });
-        break;
-      case 'room-list':
-        this.emit('room-list', {
-          rooms: message.rooms
-        });
-        break;
-      case 'error':
-        this.emit('error', {
-          message: message.message
-        });
-        break;
-      default:
-        console.warn('Unknown message type:', message.type);
-    }
   }
 
   on(event, handler) {
@@ -222,9 +173,68 @@ class UniWRTCClient {
       });
     }
   }
-}
 
-// Export for Node.js and browser
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { UniWRTCClient };
+  handleMessage(message) {
+    switch (message.type) {
+      case 'welcome':
+        this.clientId = message.clientId;
+        this.emit('connected', { clientId: this.clientId });
+        break;
+      case 'joined':
+        this.roomId = message.roomId;
+        this.emit('joined', {
+          roomId: message.roomId,
+          clientId: message.clientId,
+          clients: message.clients
+        });
+        break;
+      case 'peer-joined':
+        this.emit('peer-joined', {
+          clientId: message.clientId
+        });
+        break;
+      case 'peer-left':
+        this.emit('peer-left', {
+          clientId: message.clientId
+        });
+        break;
+      case 'offer':
+        this.emit('offer', {
+          peerId: message.peerId,
+          offer: message.offer
+        });
+        break;
+      case 'answer':
+        this.emit('answer', {
+          peerId: message.peerId,
+          answer: message.answer
+        });
+        break;
+      case 'ice-candidate':
+        this.emit('ice-candidate', {
+          peerId: message.peerId,
+          candidate: message.candidate
+        });
+        break;
+      case 'room-list':
+        this.emit('room-list', {
+          rooms: message.rooms
+        });
+        break;
+      case 'error':
+        this.emit('error', {
+          message: message.message
+        });
+        break;
+      case 'chat':
+        this.emit('chat', {
+          text: message.text,
+          senderId: message.senderId,
+          roomId: message.roomId
+        });
+        break;
+      default:
+        console.log('Unknown message type:', message.type);
+    }
+  }
 }
