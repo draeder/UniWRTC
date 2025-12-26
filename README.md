@@ -188,22 +188,22 @@ client.on('joined', (data) => {
 });
 
 client.on('peer-joined', (data) => {
-  console.log('New peer joined:', data.peerId || data.clientId);
+  console.log('New peer joined:', data.peerId);
   // Initiate WebRTC connection with new peer
 });
 
 client.on('offer', (data) => {
-  console.log('Received offer from:', data.peerId || data.senderId);
+  console.log('Received offer from:', data.peerId);
   // Handle WebRTC offer
 });
 
 client.on('answer', (data) => {
-  console.log('Received answer from:', data.peerId || data.senderId);
+  console.log('Received answer from:', data.peerId);
   // Handle WebRTC answer
 });
 
 client.on('ice-candidate', (data) => {
-  console.log('Received ICE candidate from:', data.peerId || data.senderId);
+  console.log('Received ICE candidate from:', data.peerId);
   // Add ICE candidate to peer connection
 });
 
@@ -253,7 +253,7 @@ function createPeerConnection(peerId) {
 
 // Handle new peer
 client.on('peer-joined', async (data) => {
-  const pc = createPeerConnection(data.clientId);
+  const pc = createPeerConnection(data.peerId);
   
   // Add local tracks
   const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -265,22 +265,22 @@ client.on('peer-joined', async (data) => {
   // Create and send offer
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
-  client.sendOffer(offer, data.clientId);
+  client.sendOffer(offer, data.peerId);
 });
 
 // Handle incoming offer
 client.on('offer', async (data) => {
-  const pc = createPeerConnection(data.senderId);
+  const pc = createPeerConnection(data.peerId);
   
   await pc.setRemoteDescription(data.offer);
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
-  client.sendAnswer(answer, data.senderId);
+  client.sendAnswer(answer, data.peerId);
 });
 
 // Handle incoming answer
 client.on('answer', async (data) => {
-  const pc = peerConnections.get(data.senderId);
+  const pc = peerConnections.get(data.peerId);
   if (pc) {
     await pc.setRemoteDescription(data.answer);
   }
@@ -288,7 +288,7 @@ client.on('answer', async (data) => {
 
 // Handle ICE candidates
 client.on('ice-candidate', async (data) => {
-  const pc = peerConnections.get(data.senderId);
+  const pc = peerConnections.get(data.peerId);
   if (pc) {
     await pc.addIceCandidate(data.candidate);
   }

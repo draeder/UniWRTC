@@ -159,29 +159,29 @@ class UniWRTCClient {
         break;
       case 'peer-joined':
         this.emit('peer-joined', {
-          clientId: message.clientId
+          peerId: message.peerId
         });
         break;
       case 'peer-left':
         this.emit('peer-left', {
-          clientId: message.clientId
+          peerId: message.peerId
         });
         break;
       case 'offer':
         this.emit('offer', {
-          senderId: message.senderId,
+          peerId: message.peerId,
           offer: message.offer
         });
         break;
       case 'answer':
         this.emit('answer', {
-          senderId: message.senderId,
+          peerId: message.peerId,
           answer: message.answer
         });
         break;
       case 'ice-candidate':
         this.emit('ice-candidate', {
-          senderId: message.senderId,
+          peerId: message.peerId,
           candidate: message.candidate
         });
         break;

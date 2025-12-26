@@ -89,11 +89,11 @@ export class Room {
     
     const client = this.clients.get(clientId);
     if (client && client.readyState === WebSocket.OPEN) {
-      // Send joined confirmation
+      // Send joined confirmation (align with server schema)
       client.send(JSON.stringify({
         type: 'joined',
         roomId: roomId,
-        peerId: peerId || clientId,
+        clientId: clientId,
         clients: peers
       }));
     }
@@ -101,8 +101,7 @@ export class Room {
     // Notify other peers
     this.broadcast({
       type: 'peer-joined',
-      peerId: peerId || clientId,
-      clientId: clientId
+      peerId: clientId
     }, clientId);
   }
 

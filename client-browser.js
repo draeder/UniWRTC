@@ -122,7 +122,7 @@ class UniWRTCClient {
     }
   }
 
-  sendOffer(targetId, offer) {
+  sendOffer(offer, targetId) {
     this.send({
       type: 'offer',
       offer: offer,
@@ -131,7 +131,7 @@ class UniWRTCClient {
     });
   }
 
-  sendAnswer(targetId, answer) {
+  sendAnswer(answer, targetId) {
     this.send({
       type: 'answer',
       answer: answer,
@@ -140,7 +140,7 @@ class UniWRTCClient {
     });
   }
 
-  sendIceCandidate(targetId, candidate) {
+  sendIceCandidate(candidate, targetId) {
     this.send({
       type: 'ice-candidate',
       candidate: candidate,
@@ -197,14 +197,12 @@ class UniWRTCClient {
         break;
       case 'peer-joined':
         this.emit('peer-joined', {
-          peerId: message.peerId || message.clientId,
-          clientId: message.clientId
+          peerId: message.peerId
         });
         break;
       case 'peer-left':
         this.emit('peer-left', {
-          peerId: message.peerId || message.clientId,
-          clientId: message.clientId
+          peerId: message.peerId
         });
         break;
       case 'offer':
@@ -238,7 +236,7 @@ class UniWRTCClient {
       case 'chat':
         this.emit('chat', {
           text: message.text,
-          senderId: message.senderId,
+          peerId: message.peerId,
           roomId: message.roomId
         });
         break;
@@ -246,4 +244,9 @@ class UniWRTCClient {
         console.log('Unknown message type:', message.type);
     }
   }
+}
+
+// Attach to window for non-module script usage
+if (typeof window !== 'undefined') {
+  window.UniWRTCClient = UniWRTCClient;
 }

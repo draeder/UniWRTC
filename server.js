@@ -208,8 +208,7 @@ function handleJoin(ws, message) {
   // Notify other clients in the room
   broadcastToRoom(roomId, {
     type: 'peer-joined',
-    peerId: ws.clientId,
-    clientId: ws.clientId
+    peerId: ws.clientId
   }, ws);
 }
 
@@ -228,7 +227,7 @@ function handleLeave(ws, message) {
   // Notify other clients
   broadcastToRoom(roomId, {
     type: 'peer-left',
-    clientId: ws.clientId
+    peerId: ws.clientId
   });
 
   // Clean up empty rooms
@@ -294,7 +293,7 @@ function handleChat(ws, message) {
       client.send(JSON.stringify({
         type: 'chat',
         text: text,
-        senderId: ws.clientId,
+        peerId: ws.clientId,
         roomId: roomId
       }));
     }

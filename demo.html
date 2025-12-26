@@ -460,7 +460,7 @@
                     updatePeersList(knownPeers);
                     
                     // Update room info with dynamic peer count
-                    updateRoomInfo(data.roomId, data.peerId || client.clientId);
+                    updateRoomInfo(data.roomId, client.clientId);
                 });
 
                 client.on('peer-joined', (data) => {
@@ -481,7 +481,7 @@
                 });
 
                 client.on('peer-left', (data) => {
-                    const peerId = data.peerId || data.clientId;
+                    const peerId = data.peerId;
                     log(`Peer left: ${peerId}`, 'warning');
                     // Remove from known peers
                     knownPeers = knownPeers.filter(id => id !== peerId);
@@ -511,7 +511,7 @@
                         await pc.setLocalDescription(answer);
                         
                         // Send answer back
-                        client.sendAnswer(data.peerId, answer);
+                        client.sendAnswer(answer, data.peerId);
                     } catch (e) {
                         log(`Offer error: ${e.message}`, 'error');
                     }
@@ -552,8 +552,8 @@
                 });
 
                 client.on('chat', (data) => {
-                    displayChatMessage(data.text, `${data.senderId.substring(0, 6)}...`, false);
-                    log(`Chat from ${data.senderId}: ${data.text}`, 'info');
+                    displayChatMessage(data.text, `${data.peerId.substring(0, 6)}...`, false);
+                    log(`Chat from ${data.peerId}: ${data.text}`, 'info');
                 });
 
                 await client.connect();
@@ -635,7 +635,7 @@
             pc.onicecandidate = (event) => {
                 if (event.candidate) {
                     log(`Sending ICE candidate to ${peerId.substring(0, 6)}...`, 'info');
-                    client.sendIceCandidate(peerId, event.candidate);
+                    client.sendIceCandidate(event.candidate, peerId);
                 }
             };
 
@@ -649,7 +649,7 @@
                 
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
-                client.sendOffer(peerId, offer);
+                client.sendOffer(offer, peerId);
                 log(`Sent offer to ${peerId.substring(0, 6)}...`, 'success');
             }
 
