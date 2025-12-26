@@ -3,9 +3,13 @@
   "version": "1.0.4",
   "description": "A universal WebRTC signaling service",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "server": "node server.js",
     "test": "node test.js"
   },
   "keywords": [
@@ -19,6 +23,9 @@
   "license": "MIT",
   "dependencies": {
     "ws": "^8.17.1"
+  },
+  "devDependencies": {
+    "vite": "^6.0.6"
   },
   "engines": {
     "node": ">=14.0.0"

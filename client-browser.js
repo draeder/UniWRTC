@@ -260,3 +260,6 @@ class UniWRTCClient {
 if (typeof window !== 'undefined') {
   window.UniWRTCClient = UniWRTCClient;
 }
+
+// ESM default export for bundlers like Vite
+export default UniWRTCClient;
