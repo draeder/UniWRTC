@@ -53,14 +53,21 @@ PORT=8080
 
 ### Try the Demo
 
-Open `demo.html` in your web browser to try the interactive demo:
+The interactive demo is available live at **https://signal.peer.ooo/** (Cloudflare Workers deployment) or run locally:
 
-1. Start the server with `npm start` (local signaling at `ws://localhost:8080`), **or** use the deployed Workers endpoint `wss://signal.peer.ooo`.
-2. Open `demo.html` in your browser.
-3. Click "Connect" to connect to the signaling server.
-4. Enter a session ID and click "Join Session".
-5. Open another browser window/tab with the same demo page.
-6. Join the same session to see peer connections in action and P2P data channels open.
+**Using the deployed demo (recommended):**
+1. Open https://signal.peer.ooo/ in two browser tabs
+2. Default room is `demo-room`—both tabs will auto-connect
+3. Click "Connect" to join
+4. Watch the activity log to see peers connecting
+5. Open the P2P chat and send messages between tabs
+
+**Or run locally:**
+1. Start the server: `npm start` (signaling at `ws://localhost:8080`)
+2. Start the Vite dev server: `npm run dev` (demo at `http://localhost:5173/`)
+3. Open the demo in two browser tabs
+4. Enter the same session ID in both, then Connect
+5. Chat P2P once data channels open
 
 ## Usage
 
@@ -166,10 +173,11 @@ The signaling server accepts WebSocket connections and supports the following me
 
 Use directly from npm:
 ```javascript
-// ESM
-import { UniWRTCClient } from 'uniwrtc/client-browser.js';
-// or CommonJS (Node)
-const { UniWRTCClient } = require('uniwrtc/client.js');
+// ESM (browser)
+import UniWRTCClient from 'uniwrtc/client-browser.js';
+
+// CommonJS (Node.js)
+const UniWRTCClient = require('uniwrtc/client.js');
 ```
 
 The `client.js` library provides a convenient wrapper for the signaling protocol:
@@ -211,8 +219,8 @@ client.on('ice-candidate', (data) => {
 // Connect to the server
 await client.connect();
 
-// Join a room
-client.joinRoom('my-room');
+// Join a session
+client.joinSession('my-session');
 
 // Send WebRTC signaling messages
 client.sendOffer(offerObject, targetPeerId);
@@ -298,6 +306,11 @@ client.on('ice-candidate', async (data) => {
 // Connect and join session
 await client.connect();
 client.joinSession('my-video-session');
+
+// Or use Cloudflare Durable Objects deployment
+const cfClient = new UniWRTCClient('wss://signal.peer.ooo?room=my-session');
+await cfClient.connect();
+cfClient.joinSession('my-session');
 ```
 
 ## API Reference
@@ -319,12 +332,12 @@ new UniWRTCClient(serverUrl, options)
 
 - `connect()`: Connect to the signaling server (returns Promise)
 - `disconnect()`: Disconnect from the server
-- `joinSession(sessionId)`: Join a specific session
+- `joinSession(sessionId)`: Join a specific session (peers isolated by session)
 - `leaveSession()`: Leave the current session
-- `sendOffer(offer, targetId)`: Send a WebRTC offer
-- `sendAnswer(answer, targetId)`: Send a WebRTC answer
-- `sendIceCandidate(candidate, targetId)`: Send an ICE candidate
-- `listRooms()`: Request list of available rooms
+- `sendOffer(offer, targetId)`: Send a WebRTC offer to a specific peer
+- `sendAnswer(answer, targetId)`: Send a WebRTC answer to a specific peer
+- `sendIceCandidate(candidate, targetId)`: Send an ICE candidate to a specific peer
+- `listRooms()`: Request list of available sessions (legacy)
 - `on(event, handler)`: Register event handler
 - `off(event, handler)`: Unregister event handler
 
@@ -359,21 +372,22 @@ Response:
 
 ## Architecture
 
-### Session Management
+### Session-based Peer Isolation
 
-- Each session is identified by a unique session ID (string)
-- Clients can join/leave sessions dynamically
-- Messages can be sent to specific peers or broadcast to all peers in a session
-- Empty sessions are automatically cleaned up
+- **Sessions**: Each session is identified by a unique string ID (also called "room" in the UI)
+- **Peer routing**: Each peer gets a unique client ID; signaling messages are routed only to intended targets
+- **Session isolation**: Peers in different sessions cannot see or communicate with each other
+- **Cloudflare Durable Objects**: Uses DO state to isolate sessions; routing by `?room=` query param per session
+- Clients join with `joinSession(sessionId)` and receive notifications when other peers join the same session
 
 ### Message Flow
 
-1. Client connects via WebSocket
-2. Server assigns a unique client ID
-3. Client joins a room
-4. Server notifies existing peers about the new client
-5. Peers exchange WebRTC signaling messages through the server
-6. Server routes messages based on target ID or broadcasts to room
+1. Client connects via WebSocket (or WS-over-HTTP for Cloudflare)
+2. Server/Durable Object assigns a unique client ID
+3. Client sends join message with session ID
+4. Server broadcasts `peer-joined` to other peers in the same session only
+5. Peers exchange WebRTC offers/answers/ICE candidates via the server
+6. Server routes signaling messages to specific peers by target ID (unicast, not broadcast)
 
 ## Security Considerations
 
