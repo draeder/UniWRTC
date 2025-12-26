@@ -16,19 +16,21 @@ A universal WebRTC signaling service that provides a simple and flexible WebSock
 
 ### Installation
 
-1. Clone the repository:
+#### From npm (recommended)
+```bash
+npm install uniwrtc
+```
+
+Run the bundled server locally (installed binary is `uniwrtc` via npm scripts):
+```bash
+npx uniwrtc start    # or: node server.js if using the cloned repo
+```
+
+#### From source
 ```bash
 git clone https://github.com/draeder/UniWRTC.git
 cd UniWRTC
-```
-
-2. Install dependencies:
-```bash
 npm install
-```
-
-3. Start the server:
-```bash
 npm start
 ```
 
@@ -51,12 +53,12 @@ PORT=8080
 
 Open `demo.html` in your web browser to try the interactive demo:
 
-1. Start the server with `npm start`
-2. Open `demo.html` in your browser
-3. Click "Connect" to connect to the signaling server
-4. Enter a room ID and click "Join Room"
-5. Open another browser window/tab with the same demo page
-6. Join the same room to see peer connections in action
+1. Start the server with `npm start` (local signaling at `ws://localhost:8080`), **or** use the deployed Workers endpoint `wss://signal.peer.ooo`.
+2. Open `demo.html` in your browser.
+3. Click "Connect" to connect to the signaling server.
+4. Enter a room ID and click "Join Room".
+5. Open another browser window/tab with the same demo page.
+6. Join the same room to see peer connections in action and P2P data channels open.
 
 ## Usage
 
@@ -144,6 +146,7 @@ The signaling server accepts WebSocket connections and supports the following me
 ```json
 {
   "type": "peer-joined",
+  "peerId": "new-peer-id",
   "clientId": "new-peer-id"
 }
 ```
@@ -152,11 +155,21 @@ The signaling server accepts WebSocket connections and supports the following me
 ```json
 {
   "type": "peer-left",
+  "peerId": "departed-peer-id",
   "clientId": "departed-peer-id"
 }
 ```
 
 ### Client Library Usage
+
+Use directly from npm:
+```javascript
+// ESM
+import { UniWRTCClient } from 'uniwrtc/client-browser.js';
+// or CommonJS
+const { UniWRTCClient } = require('uniwrtc/client-browser.js');
+// For Node.js signaling client use 'uniwrtc/client.js'
+```
 
 The `client.js` library provides a convenient wrapper for the signaling protocol:
 
@@ -175,22 +188,22 @@ client.on('joined', (data) => {
 });
 
 client.on('peer-joined', (data) => {
-  console.log('New peer joined:', data.clientId);
+  console.log('New peer joined:', data.peerId || data.clientId);
   // Initiate WebRTC connection with new peer
 });
 
 client.on('offer', (data) => {
-  console.log('Received offer from:', data.senderId);
+  console.log('Received offer from:', data.peerId || data.senderId);
   // Handle WebRTC offer
 });
 
 client.on('answer', (data) => {
-  console.log('Received answer from:', data.senderId);
+  console.log('Received answer from:', data.peerId || data.senderId);
   // Handle WebRTC answer
 });
 
 client.on('ice-candidate', (data) => {
-  console.log('Received ICE candidate from:', data.senderId);
+  console.log('Received ICE candidate from:', data.peerId || data.senderId);
   // Add ICE candidate to peer connection
 });
 
