@@ -21,17 +21,17 @@ document.getElementById('app').innerHTML = `
             <div class="connection-controls">
                 <div>
                     <label style="display: block; margin-bottom: 5px; color: #64748b; font-size: 13px;">Server URL</label>
-                    <input type="text" id="serverUrl" placeholder="wss://signal.peer.ooo or ws://localhost:8080" value="wss://signal.peer.ooo">
+                    <input type="text" id="serverUrl" data-testid="serverUrl" placeholder="wss://signal.peer.ooo or ws://localhost:8080" value="wss://signal.peer.ooo">
                 </div>
                 <div>
                     <label style="display: block; margin-bottom: 5px; color: #64748b; font-size: 13px;">Room / Session ID</label>
-                    <input type="text" id="roomId" placeholder="my-room">
+                    <input type="text" id="roomId" data-testid="roomId" placeholder="my-room">
                 </div>
             </div>
             <div style="display: flex; gap: 10px; align-items: center;">
-                <button onclick="window.connect()" class="btn-primary" id="connectBtn">Connect</button>
-                <button onclick="window.disconnect()" class="btn-danger" id="disconnectBtn" disabled>Disconnect</button>
-                <span id="statusBadge" class="status-badge status-disconnected">Disconnected</span>
+                <button onclick="window.connect()" class="btn-primary" id="connectBtn" data-testid="connectBtn">Connect</button>
+                <button onclick="window.disconnect()" class="btn-danger" id="disconnectBtn" data-testid="disconnectBtn" disabled>Disconnect</button>
+                <span id="statusBadge" data-testid="statusBadge" class="status-badge status-disconnected">Disconnected</span>
             </div>
         </div>
 
@@ -40,36 +40,36 @@ document.getElementById('app').innerHTML = `
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                 <div>
                     <strong style="color: #64748b;">Client ID:</strong>
-                    <div id="clientId" style="font-family: monospace; color: #333; margin-top: 5px;">Not connected</div>
+                    <div id="clientId" data-testid="clientId" style="font-family: monospace; color: #333; margin-top: 5px;">Not connected</div>
                 </div>
                 <div>
                     <strong style="color: #64748b;">Session ID:</strong>
-                    <div id="sessionId" style="font-family: monospace; color: #333; margin-top: 5px;">Not joined</div>
+                    <div id="sessionId" data-testid="sessionId" style="font-family: monospace; color: #333; margin-top: 5px;">Not joined</div>
                 </div>
             </div>
         </div>
 
         <div class="card">
             <h2>Connected Peers</h2>
-            <div id="peerList" class="peer-list">
+            <div id="peerList" data-testid="peerList" class="peer-list">
                 <p style="color: #94a3b8;">No peers connected</p>
             </div>
         </div>
 
         <div class="card">
             <h2>Peer-to-Peer Chat</h2>
-            <div id="chatContainer">
+            <div id="chatContainer" data-testid="chatContainer">
                 <p>Connect to a room and wait for peers to start chatting</p>
             </div>
             <div class="chat-controls">
-                <input type="text" id="chatMessage" placeholder="Type a message..." onkeypress="if(event.key === 'Enter') window.sendChatMessage()">
-                <button onclick="window.sendChatMessage()" class="btn-primary">Send</button>
+                <input type="text" id="chatMessage" data-testid="chatMessage" placeholder="Type a message..." onkeypress="if(event.key === 'Enter') window.sendChatMessage()">
+                <button onclick="window.sendChatMessage()" class="btn-primary" data-testid="sendBtn">Send</button>
             </div>
         </div>
 
         <div class="card">
             <h2>Activity Log</h2>
-            <div id="logContainer" class="log-container">
+            <div id="logContainer" data-testid="logContainer" class="log-container">
                 <div class="log-entry success">UniWRTC Demo ready</div>
             </div>
         </div>
@@ -95,6 +95,18 @@ function log(message, type = 'info') {
         entry.className = `log-entry ${type}`;
     const timestamp = new Date().toLocaleTimeString();
         entry.textContent = `[${timestamp}] ${message}`;
+    
+    // Add testid for specific log messages
+    if (message.includes('Connected with client ID')) {
+        entry.setAttribute('data-testid', 'log-connected');
+    } else if (message.includes('Joined session')) {
+        entry.setAttribute('data-testid', 'log-joined');
+    } else if (message.includes('Peer joined')) {
+        entry.setAttribute('data-testid', 'log-peer-joined');
+    } else if (message.includes('Data channel open')) {
+        entry.setAttribute('data-testid', 'log-data-channel');
+    }
+    
     logContainer.appendChild(entry);
     logContainer.scrollTop = logContainer.scrollHeight;
 }
@@ -263,6 +275,8 @@ window.disconnect = function() {
         peerConnections.clear();
         dataChannels.clear();
         updatePeerList();
+        updateStatus(false);
+        log('Disconnected', 'warning');
     }
 };
 

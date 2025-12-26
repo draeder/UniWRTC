@@ -140,3 +140,23 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+# Playwright test results
+test-results/
+playwright-report/
+
+# Cloudflare Wrangler
+.wrangler/
+wrangler.toml.bak
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# IDE
+.idea/
+*.iml
+*.swp
+*.swo
