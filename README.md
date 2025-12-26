@@ -2,10 +2,12 @@
 
 A universal WebRTC signaling service that provides a simple and flexible WebSocket-based signaling server for WebRTC applications.
 
+Available on npm: https://www.npmjs.com/package/uniwrtc
+
 ## Features
 
 - 🚀 **Simple WebSocket-based signaling** - Easy to integrate with any WebRTC application
-- 🏠 **Room-based architecture** - Support for multiple rooms with isolated peer groups
+- 🏠 **Session-based architecture** - Support for multiple sessions with isolated peer groups
 - 🔌 **Flexible client library** - Ready-to-use JavaScript client for browser and Node.js
 - 📡 **Real-time messaging** - Efficient message routing between peers
 - 🔄 **Auto-reconnection** - Built-in reconnection logic for reliable connections
@@ -56,9 +58,9 @@ Open `demo.html` in your web browser to try the interactive demo:
 1. Start the server with `npm start` (local signaling at `ws://localhost:8080`), **or** use the deployed Workers endpoint `wss://signal.peer.ooo`.
 2. Open `demo.html` in your browser.
 3. Click "Connect" to connect to the signaling server.
-4. Enter a room ID and click "Join Room".
+4. Enter a session ID and click "Join Session".
 5. Open another browser window/tab with the same demo page.
-6. Join the same room to see peer connections in action and P2P data channels open.
+6. Join the same session to see peer connections in action and P2P data channels open.
 
 ## Usage
 
@@ -68,19 +70,19 @@ The signaling server accepts WebSocket connections and supports the following me
 
 #### Client → Server Messages
 
-**Join a room:**
+**Join a session:**
 ```json
 {
   "type": "join",
-  "roomId": "room-123"
+  "sessionId": "session-123"
 }
 ```
 
-**Leave a room:**
+**Leave a session:**
 ```json
 {
   "type": "leave",
-  "roomId": "room-123"
+  "sessionId": "session-123"
 }
 ```
 
@@ -90,7 +92,7 @@ The signaling server accepts WebSocket connections and supports the following me
   "type": "offer",
   "offer": { /* RTCSessionDescription */ },
   "targetId": "peer-client-id",
-  "roomId": "room-123"
+  "sessionId": "session-123"
 }
 ```
 
@@ -100,7 +102,7 @@ The signaling server accepts WebSocket connections and supports the following me
   "type": "answer",
   "answer": { /* RTCSessionDescription */ },
   "targetId": "peer-client-id",
-  "roomId": "room-123"
+  "sessionId": "session-123"
 }
 ```
 
@@ -110,7 +112,7 @@ The signaling server accepts WebSocket connections and supports the following me
   "type": "ice-candidate",
   "candidate": { /* RTCIceCandidate */ },
   "targetId": "peer-client-id",
-  "roomId": "room-123"
+  "sessionId": "session-123"
 }
 ```
 
@@ -132,11 +134,11 @@ The signaling server accepts WebSocket connections and supports the following me
 }
 ```
 
-**Room joined confirmation:**
+**Session joined confirmation:**
 ```json
 {
   "type": "joined",
-  "roomId": "room-123",
+  "sessionId": "session-123",
   "clientId": "abc123",
   "clients": ["xyz789", "def456"]
 }
@@ -146,8 +148,8 @@ The signaling server accepts WebSocket connections and supports the following me
 ```json
 {
   "type": "peer-joined",
-  "peerId": "new-peer-id",
-  "clientId": "new-peer-id"
+  "sessionId": "session-123",
+  "peerId": "new-peer-id"
 }
 ```
 
@@ -155,8 +157,8 @@ The signaling server accepts WebSocket connections and supports the following me
 ```json
 {
   "type": "peer-left",
-  "peerId": "departed-peer-id",
-  "clientId": "departed-peer-id"
+  "sessionId": "session-123",
+  "peerId": "departed-peer-id"
 }
 ```
 
@@ -166,9 +168,8 @@ Use directly from npm:
 ```javascript
 // ESM
 import { UniWRTCClient } from 'uniwrtc/client-browser.js';
-// or CommonJS
-const { UniWRTCClient } = require('uniwrtc/client-browser.js');
-// For Node.js signaling client use 'uniwrtc/client.js'
+// or CommonJS (Node)
+const { UniWRTCClient } = require('uniwrtc/client.js');
 ```
 
 The `client.js` library provides a convenient wrapper for the signaling protocol:
@@ -183,7 +184,7 @@ client.on('connected', (data) => {
 });
 
 client.on('joined', (data) => {
-  console.log('Joined room:', data.roomId);
+  console.log('Joined session:', data.sessionId);
   console.log('Existing peers:', data.clients);
 });
 
@@ -294,9 +295,9 @@ client.on('ice-candidate', async (data) => {
   }
 });
 
-// Connect and join room
+// Connect and join session
 await client.connect();
-client.joinRoom('my-video-room');
+client.joinSession('my-video-session');
 ```
 
 ## API Reference
@@ -318,8 +319,8 @@ new UniWRTCClient(serverUrl, options)
 
 - `connect()`: Connect to the signaling server (returns Promise)
 - `disconnect()`: Disconnect from the server
-- `joinRoom(roomId)`: Join a specific room
-- `leaveRoom()`: Leave the current room
+- `joinSession(sessionId)`: Join a specific session
+- `leaveSession()`: Leave the current session
 - `sendOffer(offer, targetId)`: Send a WebRTC offer
 - `sendAnswer(answer, targetId)`: Send a WebRTC answer
 - `sendIceCandidate(candidate, targetId)`: Send an ICE candidate
@@ -342,7 +343,7 @@ new UniWRTCClient(serverUrl, options)
 
 ## Health Check
 
-The server provides an HTTP health check endpoint:
+The server provides an HTTP health check endpoint for monitoring:
 
 ```bash
 curl http://localhost:8080/health
@@ -358,12 +359,12 @@ Response:
 
 ## Architecture
 
-### Room Management
+### Session Management
 
-- Each room is identified by a unique room ID (string)
-- Clients can join/leave rooms dynamically
-- Messages can be sent to specific peers or broadcast to all peers in a room
-- Empty rooms are automatically cleaned up
+- Each session is identified by a unique session ID (string)
+- Clients can join/leave sessions dynamically
+- Messages can be sent to specific peers or broadcast to all peers in a session
+- Empty sessions are automatically cleaned up
 
 ### Message Flow
 

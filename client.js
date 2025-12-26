@@ -8,7 +8,7 @@ class UniWRTCClient {
     this.serverUrl = serverUrl;
     this.ws = null;
     this.clientId = null;
-    this.roomId = null;
+    this.sessionId = null;
     this.peers = new Map();
     this.options = {
       autoReconnect: true,
@@ -85,21 +85,21 @@ class UniWRTCClient {
     }
   }
 
-  joinRoom(roomId) {
-    this.roomId = roomId;
+  joinSession(sessionId) {
+    this.sessionId = sessionId;
     this.send({
       type: 'join',
-      roomId: roomId
+      sessionId: sessionId
     });
   }
 
-  leaveRoom() {
-    if (this.roomId) {
+  leaveSession() {
+    if (this.sessionId) {
       this.send({
         type: 'leave',
-        roomId: this.roomId
+        sessionId: this.sessionId
       });
-      this.roomId = null;
+      this.sessionId = null;
     }
   }
 
@@ -108,7 +108,7 @@ class UniWRTCClient {
       type: 'offer',
       offer: offer,
       targetId: targetId,
-      roomId: this.roomId
+      sessionId: this.sessionId
     });
   }
 
@@ -117,7 +117,7 @@ class UniWRTCClient {
       type: 'answer',
       answer: answer,
       targetId: targetId,
-      roomId: this.roomId
+      sessionId: this.sessionId
     });
   }
 
@@ -126,7 +126,7 @@ class UniWRTCClient {
       type: 'ice-candidate',
       candidate: candidate,
       targetId: targetId,
-      roomId: this.roomId
+      sessionId: this.sessionId
     });
   }
 
@@ -152,18 +152,20 @@ class UniWRTCClient {
         break;
       case 'joined':
         this.emit('joined', {
-          roomId: message.roomId,
+          sessionId: message.sessionId,
           clientId: message.clientId,
           clients: message.clients
         });
         break;
       case 'peer-joined':
         this.emit('peer-joined', {
+          sessionId: message.sessionId,
           peerId: message.peerId
         });
         break;
       case 'peer-left':
         this.emit('peer-left', {
+          sessionId: message.sessionId,
           peerId: message.peerId
         });
         break;

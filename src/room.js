@@ -17,7 +17,7 @@ export class Room {
       const clientId = crypto.randomUUID().substring(0, 9);
       this.clients.set(clientId, server);
 
-      console.log(`[Room] Client ${clientId} joined (total: ${this.clients.size})`);
+      console.log(`[Room] Client ${clientId} connected (total: ${this.clients.size})`);
 
       // Send welcome message
       server.send(JSON.stringify({
@@ -26,11 +26,7 @@ export class Room {
         message: 'Connected to UniWRTC signaling room'
       }));
 
-      // Notify existing clients
-      this.broadcast({
-        type: 'peer-joined',
-        clientId: clientId
-      }, clientId);
+      // NOTE: peer-joined is sent when client explicitly joins via 'join' message
 
       server.onmessage = async (event) => {
         try {
@@ -45,10 +41,10 @@ export class Room {
       server.onclose = () => {
         console.log(`[Room] Client ${clientId} left`);
         this.clients.delete(clientId);
+        // Note: sessionId should be tracked per client if needed
         this.broadcast({
           type: 'peer-left',
-          peerId: clientId,
-          clientId: clientId
+          peerId: clientId
         });
       };
 
@@ -81,7 +77,7 @@ export class Room {
   }
 
   async handleJoin(clientId, message) {
-    const { roomId, peerId } = message;
+    const { sessionId, peerId } = message;
     
     // Get list of other peers
     const peers = Array.from(this.clients.keys())
@@ -92,7 +88,7 @@ export class Room {
       // Send joined confirmation (align with server schema)
       client.send(JSON.stringify({
         type: 'joined',
-        roomId: roomId,
+        sessionId: sessionId,
         clientId: clientId,
         clients: peers
       }));
@@ -101,6 +97,7 @@ export class Room {
     // Notify other peers
     this.broadcast({
       type: 'peer-joined',
+      sessionId: sessionId,
       peerId: clientId
     }, clientId);
   }

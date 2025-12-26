@@ -54,9 +54,12 @@ function log(message, data = '') {
   console.log(`[${timestamp}] ${message}`, data);
 }
 
-function broadcastToRoom(roomId, message, excludeClient = null) {
-  const room = rooms.get(roomId);
-  if (!room) return;
+function broadcastToRoom(sessionId, message, excludeClient = null) {
+  const room = rooms.get(sessionId);
+  if (!room) {
+    log(`WARNING: Attempted to broadcast to non-existent session: ${sessionId}`);
+    return;
+  }
 
   room.clients.forEach(client => {
     if (client !== excludeClient && client.readyState === WebSocket.OPEN) {
@@ -164,33 +167,33 @@ function handleSetId(ws, message) {
 }
 
 function handleJoin(ws, message) {
-  const { roomId } = message;
+  const { sessionId } = message;
   
-  if (!roomId) {
-    sendToClient(ws, { type: 'error', message: 'Room ID is required' });
+  if (!sessionId) {
+    sendToClient(ws, { type: 'error', message: 'Session ID is required' });
     return;
   }
 
-  // Leave current room if in one
+  // Leave current session if in one
   if (ws.room) {
-    handleLeave(ws, { roomId: ws.room });
+    handleLeave(ws, { sessionId: ws.room });
   }
 
-  // Create room if it doesn't exist
-  if (!rooms.has(roomId)) {
-    rooms.set(roomId, {
-      id: roomId,
+  // Create session if it doesn't exist
+  if (!rooms.has(sessionId)) {
+    rooms.set(sessionId, {
+      id: sessionId,
       clients: new Set(),
       createdAt: Date.now()
     });
-    log('Room created:', roomId);
+    log('Session created:', sessionId);
   }
 
-  const room = rooms.get(roomId);
+  const room = rooms.get(sessionId);
   room.clients.add(ws);
-  ws.room = roomId;
+  ws.room = sessionId;
 
-  log(`Client ${ws.clientId} joined room ${roomId}`);
+  log(`Client ${ws.clientId} joined session ${sessionId}`);
 
   // Get list of existing clients in the room
   const existingClients = Array.from(room.clients)
@@ -200,50 +203,52 @@ function handleJoin(ws, message) {
   // Notify the joining client
   sendToClient(ws, {
     type: 'joined',
-    roomId: roomId,
+    sessionId: sessionId,
     clientId: ws.clientId,
     clients: existingClients
   });
 
-  // Notify other clients in the room
-  broadcastToRoom(roomId, {
+  // Notify other clients in the session
+  broadcastToRoom(sessionId, {
     type: 'peer-joined',
+    sessionId: sessionId,
     peerId: ws.clientId
   }, ws);
 }
 
 function handleLeave(ws, message) {
-  const { roomId } = message;
+  const { sessionId } = message;
   
-  if (!roomId || !rooms.has(roomId)) {
+  if (!sessionId || !rooms.has(sessionId)) {
     return;
   }
 
-  const room = rooms.get(roomId);
+  const room = rooms.get(sessionId);
   room.clients.delete(ws);
 
-  log(`Client ${ws.clientId} left room ${roomId}`);
+  log(`Client ${ws.clientId} left session ${sessionId}`);
 
   // Notify other clients
-  broadcastToRoom(roomId, {
+  broadcastToRoom(sessionId, {
     type: 'peer-left',
+    sessionId: sessionId,
     peerId: ws.clientId
   });
 
-  // Clean up empty rooms
+  // Clean up empty sessions
   if (room.clients.size === 0) {
-    rooms.delete(roomId);
-    log('Room deleted:', roomId);
+    rooms.delete(sessionId);
+    log('Session deleted:', sessionId);
   }
 
   ws.room = null;
 }
 
 function handleSignaling(ws, message) {
-  const { targetId, roomId } = message;
+  const { targetId, sessionId } = message;
 
   if (!ws.room) {
-    sendToClient(ws, { type: 'error', message: 'Not in a room' });
+    sendToClient(ws, { type: 'error', message: 'Not in a session' });
     return;
   }
 
@@ -272,29 +277,29 @@ function handleSignaling(ws, message) {
 }
 
 function handleChat(ws, message) {
-  const { roomId, text } = message;
+  const { sessionId, text } = message;
   
-  if (!roomId || !text) {
-    sendToClient(ws, { type: 'error', message: 'Room ID and text are required' });
+  if (!sessionId || !text) {
+    sendToClient(ws, { type: 'error', message: 'Session ID and text are required' });
     return;
   }
 
-  log(`Chat message in room ${roomId}: ${text.substring(0, 50)}`);
+  log(`Chat message in session ${sessionId}: ${text.substring(0, 50)}`);
 
-  const room = rooms.get(roomId);
+  const room = rooms.get(sessionId);
   if (!room) {
-    sendToClient(ws, { type: 'error', message: 'Room not found' });
+    sendToClient(ws, { type: 'error', message: 'Session not found' });
     return;
   }
 
-  // Broadcast chat to ALL clients in the room (including sender)
+  // Broadcast chat to ALL clients in the session (including sender)
   room.clients.forEach(client => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(JSON.stringify({
         type: 'chat',
         text: text,
         peerId: ws.clientId,
-        roomId: roomId
+        sessionId: sessionId
       }));
     }
   });

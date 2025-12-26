@@ -8,7 +8,7 @@ class UniWRTCClient {
     this.serverUrl = serverUrl;
     this.ws = null;
     this.clientId = null;
-    this.roomId = null;
+    this.sessionId = null;
     this.peers = new Map();
     this._connectedOnce = false;
     this.options = {
@@ -93,24 +93,26 @@ class UniWRTCClient {
     }
   }
 
-  joinRoom(roomId) {
-    // Prevent duplicate join calls for the same room
-    if (this.roomId === roomId) return;
-    this.roomId = roomId;
+  joinSession(sessionId) {
+    // Prevent duplicate join calls for the same session
+    if (this.sessionId === sessionId) return;
+    this.sessionId = sessionId;
+    
+    // Send join message
     this.send({
       type: 'join',
-      roomId: roomId,
+      sessionId: sessionId,
       peerId: this.clientId
     });
   }
 
-  leaveRoom() {
-    if (this.roomId) {
+  leaveSession() {
+    if (this.sessionId) {
       this.send({
         type: 'leave',
-        roomId: this.roomId
+        sessionId: this.sessionId
       });
-      this.roomId = null;
+      this.sessionId = null;
     }
   }
 
@@ -127,7 +129,7 @@ class UniWRTCClient {
       type: 'offer',
       offer: offer,
       targetId: targetId,
-      roomId: this.roomId
+      sessionId: this.sessionId
     });
   }
 
@@ -136,7 +138,7 @@ class UniWRTCClient {
       type: 'answer',
       answer: answer,
       targetId: targetId,
-      roomId: this.roomId
+      sessionId: this.sessionId
     });
   }
 
@@ -145,7 +147,7 @@ class UniWRTCClient {
       type: 'ice-candidate',
       candidate: candidate,
       targetId: targetId,
-      roomId: this.roomId
+      sessionId: this.sessionId
     });
   }
 
@@ -187,9 +189,9 @@ class UniWRTCClient {
         console.log('[UniWRTC] If this helps, consider donating ❤️ → https://coff.ee/draederg');
         break;
       case 'joined':
-        this.roomId = message.roomId;
+        this.sessionId = message.sessionId;
         this.emit('joined', {
-          roomId: message.roomId,
+          sessionId: message.sessionId,
           peerId: message.peerId,
           clientId: message.clientId,
           clients: message.clients
@@ -197,11 +199,13 @@ class UniWRTCClient {
         break;
       case 'peer-joined':
         this.emit('peer-joined', {
+          sessionId: message.sessionId,
           peerId: message.peerId
         });
         break;
       case 'peer-left':
         this.emit('peer-left', {
+          sessionId: message.sessionId,
           peerId: message.peerId
         });
         break;
@@ -237,7 +241,7 @@ class UniWRTCClient {
         this.emit('chat', {
           text: message.text,
           peerId: message.peerId,
-          roomId: message.roomId
+          sessionId: message.sessionId
         });
         break;
       default:

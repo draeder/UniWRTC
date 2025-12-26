@@ -282,11 +282,11 @@
         </div>
 
         <div class="card">
-            <h2>Room Status</h2>
+            <h2>Room / Session</h2>
             
             <div class="connection-controls" style="margin-bottom: 15px;">
-                <input type="text" id="roomId" placeholder="Enter room ID" value="demo-room">
-                <button class="btn-primary" id="joinBtn" onclick="joinRoom()" disabled>Join Room</button>
+                <input type="text" id="roomId" placeholder="Enter room/session ID" value="demo-room">
+                <button class="btn-primary" id="joinBtn" onclick="joinSession()" disabled>Join</button>
             </div>
             
             <div id="roomInfo">
@@ -430,18 +430,26 @@
                 log('Connecting to signaling server...', 'info');
                 
                 const customPeerId = document.getElementById('customPeerId').value.trim();
-                client = new UniWRTCClient(serverUrl, { customPeerId: customPeerId || null });
+                
+                // For Cloudflare (signal.peer.ooo), append room param to URL
+                let finalUrl = serverUrl;
+                const roomId = document.getElementById('roomId').value;
+                if (serverUrl.includes('signal.peer.ooo') && roomId) {
+                    finalUrl = serverUrl + (serverUrl.includes('?') ? '&' : '?') + `room=${roomId}`;
+                }
+                
+                client = new UniWRTCClient(finalUrl, { customPeerId: customPeerId || null });
 
                 client.on('connected', (data) => {
                     log(`Connected with ID: ${data.clientId}`, 'success');
                     updateStatus(true);
                     
-                    // Auto-join room after connecting
+                    // Auto-join session after connecting
                     const roomId = document.getElementById('roomId').value;
                     if (roomId) {
                         setTimeout(() => {
-                            log(`Auto-joining room: ${roomId}...`, 'info');
-                            client.joinRoom(roomId);
+                            log(`Auto-joining session: ${roomId}...`, 'info');
+                            client.joinSession(roomId);
                         }, 500);
                     }
                 });
@@ -455,15 +463,21 @@
                 let knownPeers = [];
 
                 client.on('joined', (data) => {
-                    log(`Joined room: ${data.roomId}`, 'success');
+                    log(`Joined session: ${data.sessionId}`, 'success');
                     knownPeers = data.clients || [];
                     updatePeersList(knownPeers);
                     
-                    // Update room info with dynamic peer count
-                    updateRoomInfo(data.roomId, client.clientId);
+                    // Update session info with dynamic peer count
+                    updateRoomInfo(data.sessionId, client.clientId);
                 });
 
                 client.on('peer-joined', (data) => {
+                    // Only connect to peers in the same session (if we have one set)
+                    if (client.sessionId && data.sessionId !== client.sessionId) {
+                        log(`Ignoring peer from different session: ${data.peerId}`, 'warning');
+                        return;
+                    }
+                    
                     log(`Peer joined: ${data.peerId}`, 'success');
                     // Add to known peers if not already there
                     if (data.peerId && !knownPeers.includes(data.peerId)) {
@@ -471,8 +485,8 @@
                         updatePeersList(knownPeers);
                     }
                     
-                    // Update room info with new peer count
-                    updateRoomInfo(client.roomId, client.clientId);
+                    // Update session info with new peer count
+                    updateRoomInfo(data.sessionId, client.clientId);
                     
                     // Auto-initiate P2P connection
                     setTimeout(() => {
@@ -481,14 +495,19 @@
                 });
 
                 client.on('peer-left', (data) => {
+                    // Only process if from current session (if we have one set)
+                    if (client.sessionId && data.sessionId !== client.sessionId) {
+                        return;
+                    }
+                    
                     const peerId = data.peerId;
                     log(`Peer left: ${peerId}`, 'warning');
                     // Remove from known peers
                     knownPeers = knownPeers.filter(id => id !== peerId);
                     updatePeersList(knownPeers);
                     
-                    // Update room info with new peer count
-                    updateRoomInfo(client.roomId, client.clientId);
+                    // Update session info with new peer count
+                    updateRoomInfo(data.sessionId, client.clientId);
                     
                     // Close peer connection
                     const pc = peerConnections.get(peerId);
@@ -580,8 +599,8 @@
                 return;
             }
 
-            if (!client || !client.roomId) {
-                log('Not connected to a room', 'error');
+            if (!client || !client.sessionId) {
+                log('Not connected to a session', 'error');
                 return;
             }
 
@@ -590,10 +609,10 @@
             document.getElementById('manualPeerId').value = '';
         }
 
-        function joinRoom() {
-            const roomId = document.getElementById('roomId').value;
+        function joinSession() {
+            const sessionId = document.getElementById('roomId').value;
             
-            if (!roomId) {
+            if (!sessionId) {
                 log('Please enter a room ID', 'error');
                 return;
             }
@@ -603,8 +622,8 @@
                 return;
             }
 
-            log(`Joining room: ${roomId}...`, 'info');
-            client.joinRoom(roomId);
+            log(`Joining session: ${sessionId}...`, 'info');
+            client.joinSession(sessionId);
         }
 
         function listRooms() {
@@ -619,12 +638,15 @@
 
         async function createPeerConnection(peerId, initiator = false) {
             if (peerConnections.has(peerId)) {
+                log(`Peer connection already exists for ${peerId.substring(0, 6)}`, 'info');
                 return peerConnections.get(peerId);
             }
 
             // Determine who should initiate based on peer IDs (lexicographic comparison)
             // Only the peer with smaller ID creates the offer
             const shouldInitiate = client.clientId < peerId;
+            
+            log(`Creating peer connection with ${peerId.substring(0, 6)} (shouldInitiate: ${shouldInitiate})`, 'info');
 
             const pc = new RTCPeerConnection({
                 iceServers: [
@@ -640,6 +662,7 @@
             };
 
             pc.ondatachannel = (event) => {
+                log(`Received data channel from ${peerId.substring(0, 6)}`, 'info');
                 setupDataChannel(peerId, event.channel);
             };
 
@@ -651,6 +674,8 @@
                 await pc.setLocalDescription(offer);
                 client.sendOffer(offer, peerId);
                 log(`Sent offer to ${peerId.substring(0, 6)}...`, 'success');
+            } else {
+                log(`Waiting for offer from ${peerId.substring(0, 6)}...`, 'info');
             }
 
             peerConnections.set(peerId, pc);
@@ -660,7 +685,6 @@
         function setupDataChannel(peerId, dataChannel) {
             dataChannel.onopen = () => {
                 log(`Data channel open with ${peerId.substring(0, 6)}...`, 'success');
-                dataChannels.set(peerId, dataChannel);
             };
 
             dataChannel.onmessage = (event) => {

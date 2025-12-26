@@ -109,14 +109,14 @@ class UniWRTCClient {
     }
   }
 
-  joinRoom(roomId) {
-    this.roomId = roomId;
-    // Durable Objects handle room joining automatically via room parameter
+  joinSession(sessionId) {
+    this.sessionId = sessionId;
+    // Durable Objects handle session joining automatically via room parameter
   }
 
-  leaveRoom() {
-    if (this.roomId) {
-      this.roomId = null;
+  leaveSession() {
+    if (this.sessionId) {
+      this.sessionId = null;
     }
   }
 
@@ -188,20 +188,22 @@ class UniWRTCClient {
         console.log('[UniWRTC] If this helps, consider donating ❤️ → https://coff.ee/draederg');
         break;
       case 'joined':
-        this.roomId = message.roomId;
+        this.sessionId = message.sessionId;
         this.emit('joined', {
-          roomId: message.roomId,
+          sessionId: message.sessionId,
           clientId: message.clientId,
           clients: message.clients
         });
         break;
       case 'peer-joined':
         this.emit('peer-joined', {
+          sessionId: message.sessionId,
           peerId: message.peerId
         });
         break;
       case 'peer-left':
         this.emit('peer-left', {
+          sessionId: message.sessionId,
           peerId: message.peerId
         });
         break;
@@ -237,7 +239,7 @@ class UniWRTCClient {
         this.emit('chat', {
           text: message.text,
           peerId: message.peerId,
-          roomId: message.roomId
+          sessionId: message.sessionId
         });
         break;
       default:
