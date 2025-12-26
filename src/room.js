@@ -79,9 +79,13 @@ export class Room {
   async handleJoin(clientId, message) {
     const { sessionId, peerId } = message;
     
+    console.log(`[Room] Client ${clientId} joining session ${sessionId}`);
+    
     // Get list of other peers
     const peers = Array.from(this.clients.keys())
       .filter(id => id !== clientId);
+    
+    console.log(`[Room] Existing peers in session:`, peers);
     
     const client = this.clients.get(clientId);
     if (client && client.readyState === WebSocket.OPEN) {
@@ -95,6 +99,7 @@ export class Room {
     }
     
     // Notify other peers
+    console.log(`[Room] Broadcasting peer-joined for ${clientId}`);
     this.broadcast({
       type: 'peer-joined',
       sessionId: sessionId,

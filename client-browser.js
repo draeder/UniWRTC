@@ -125,6 +125,7 @@ class UniWRTCClient {
   }
 
   sendOffer(offer, targetId) {
+    console.log(`[Client] Sending offer to ${targetId}`);
     this.send({
       type: 'offer',
       offer: offer,
@@ -134,6 +135,7 @@ class UniWRTCClient {
   }
 
   sendAnswer(answer, targetId) {
+    console.log(`[Client] Sending answer to ${targetId}`);
     this.send({
       type: 'answer',
       answer: answer,
@@ -143,6 +145,7 @@ class UniWRTCClient {
   }
 
   sendIceCandidate(candidate, targetId) {
+    console.log(`[Client] Sending ICE candidate to ${targetId}`);
     this.send({
       type: 'ice-candidate',
       candidate: candidate,
@@ -210,18 +213,21 @@ class UniWRTCClient {
         });
         break;
       case 'offer':
+        console.log(`[Client] Received offer from ${message.peerId}`);
         this.emit('offer', {
           peerId: message.peerId,
           offer: message.offer
         });
         break;
       case 'answer':
+        console.log(`[Client] Received answer from ${message.peerId}`);
         this.emit('answer', {
           peerId: message.peerId,
           answer: message.answer
         });
         break;
       case 'ice-candidate':
+        console.log(`[Client] Received ICE candidate from ${message.peerId}`);
         this.emit('ice-candidate', {
           peerId: message.peerId,
           candidate: message.candidate

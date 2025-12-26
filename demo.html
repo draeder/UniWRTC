@@ -314,7 +314,7 @@
                 <p style="color: #999; text-align: center; padding: 20px;">Messages will appear here</p>
             </div>
             <div class="connection-controls" style="margin-bottom: 0;">
-                <input type="text" id="chatMessage" placeholder="Type a message..." style="grid-column: 1 / -1;">
+                <input type="text" id="chatMessage" placeholder="Type a message..." style="grid-column: 1 / -1;" onkeypress="if(event.key === 'Enter') sendChatMessage()">
                 <button class="btn-primary" onclick="sendChatMessage()" style="grid-column: 1 / -1;">Send Message</button>
             </div>
         </div>        <div class="card">
