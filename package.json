@@ -1,6 +1,6 @@
 {
   "name": "uniwrtc",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "A universal WebRTC signaling service",
   "main": "server.js",
   "type": "module",

@@ -151,10 +151,10 @@ window.connect = async function() {
     try {
             log(`Connecting to ${serverUrl}...`, 'info');
         
-        // For Cloudflare, append room ID to URL
+        // For Cloudflare, use /ws endpoint with room ID query param
         let finalUrl = serverUrl;
         if (serverUrl.includes('signal.peer.ooo')) {
-                finalUrl = `${serverUrl}?room=${roomId}`;
+                finalUrl = `${serverUrl.replace(/\/$/, '')}/ws?room=${roomId}`;
                 log(`Using Cloudflare Durable Objects with session: ${roomId}`, 'info');
         }
         
