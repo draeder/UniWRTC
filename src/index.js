@@ -1,7 +1,7 @@
 /**
  * UniWRTC Cloudflare Worker
  * WebRTC Signaling Service using Durable Objects
- * Serves both static assets and WebSocket signaling
+ * Serves static assets and HTTP polling signaling
  */
 
 import { Room } from './room.js';
@@ -20,17 +20,17 @@ export default {
       });
     }
 
-    // Handle WebSocket upgrade on /ws endpoint
+    // WebSockets are intentionally disabled in this deployment.
     if (url.pathname === '/ws') {
-      if (request.headers.get('Upgrade') === 'websocket') {
-        console.log(`[Worker] WebSocket upgrade detected for room: ${url.searchParams.get('room')}`);
-        const roomId = url.searchParams.get('room') || 'default';
-        const id = env.ROOMS.idFromName(roomId);
-        const roomStub = env.ROOMS.get(id);
-        console.log(`[Worker] Routing to Durable Object: ${roomId}`);
-        return roomStub.fetch(request);
-      }
-      return new Response('WebSocket upgrade required', { status: 400 });
+      return new Response('WebSockets disabled; use /api (HTTP polling)', { status: 410 });
+    }
+
+    // HTTP signaling API (no WebSockets)
+    if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
+      const roomId = url.searchParams.get('room') || 'default';
+      const id = env.ROOMS.idFromName(roomId);
+      const roomStub = env.ROOMS.get(id);
+      return roomStub.fetch(request);
     }
 
     // Serve root as index.html

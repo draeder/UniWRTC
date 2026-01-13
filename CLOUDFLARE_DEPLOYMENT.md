@@ -70,7 +70,7 @@ await client.connect();
 ## How It Works
 
 1. **Durable Objects** - One per room, manages peer discovery
-2. **WebSocket** - Browsers connect for signaling
+2. **HTTP polling** - Browsers connect for signaling
 3. **Signaling Only** - Offers/answers/ICE via Worker
 4. **P2P Data** - WebRTC data channels bypass Cloudflare
 5. **Free Tier** - Plenty of capacity for small deployments
@@ -109,7 +109,7 @@ const serverUrl = 'http://localhost:8787/';
 
 ## Troubleshooting
 
-**WebSocket errors**: Ensure your domain is on Cloudflare with SSL enabled
+**Connection errors**: Ensure your domain is on Cloudflare with SSL enabled
 
 **Connection refused**: Check the Worker route pattern in `wrangler.toml`
 

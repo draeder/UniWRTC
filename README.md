@@ -1,20 +1,52 @@
 # UniWRTC
 
-A universal WebRTC signaling service that provides a simple and flexible WebSocket-based signaling server for WebRTC applications.
+A universal WebRTC signaling service that provides a simple and flexible **HTTP polling** signaling server for WebRTC applications.
 
 Available on npm: https://www.npmjs.com/package/uniwrtc
 
 ## Features
 
-- 🚀 **Simple WebSocket-based signaling** - Easy to integrate with any WebRTC application
+- 🚀 **Simple signaling** - HTTP polling (works locally and on Cloudflare Durable Objects)
 - 🏠 **Session-based architecture** - Support for multiple sessions with isolated peer groups
 - 🔌 **Flexible client library** - Ready-to-use JavaScript client for browser and Node.js
 - 📡 **Real-time messaging** - Efficient message routing between peers
 - 🔄 **Auto-reconnection** - Built-in reconnection logic for reliable connections
 - 📊 **Health monitoring** - HTTP health check endpoint for monitoring
-- 🎯 **Minimal dependencies** - Lightweight implementation using only the `ws` package
+- 🎯 **Minimal dependencies** - Lightweight implementation with minimal runtime deps
 
 ## Quick Start
+
+## Using with `simple-peer` (SDP text-only)
+
+This repo's signaling format sends **SDP as plain text** for offers/answers.
+`simple-peer` uses `{ type, sdp }` objects, so use the adapter in [simple-peer-adapter.js](simple-peer-adapter.js).
+
+Example (browser):
+
+```js
+import Peer from 'simple-peer';
+import UniWRTCClient from './client-browser.js';
+import { sendSimplePeerSignal, attachUniWRTCToSimplePeer, chooseDeterministicInitiator } from './simple-peer-adapter.js';
+
+const client = new UniWRTCClient('https://your-signal-server', { roomId: 'my-room' });
+await client.connect();
+
+// Join a session (peers in the same session can connect)
+await client.joinSession('my-room');
+
+// Ensure exactly ONE side initiates for a given pair
+const initiator = chooseDeterministicInitiator(client.clientId, targetId);
+const peer = new Peer({ initiator, trickle: true });
+const cleanup = attachUniWRTCToSimplePeer(client, peer);
+
+peer.on('signal', (signal) => {
+  // targetId must be the other peer's UniWRTC client id
+  sendSimplePeerSignal(client, signal, targetId);
+});
+
+// When done:
+// cleanup();
+```
 
 ### Installation
 
@@ -63,7 +95,7 @@ The interactive demo is available live at **https://signal.peer.ooo/** (Cloudfla
 5. Open the P2P chat and send messages between tabs
 
 **Or run locally:**
-1. Start the server: `npm start` (signaling at `ws://localhost:8080`)
+1. Start the server: `npm start` (signaling at `http://localhost:8080`)
 2. Start the Vite dev server: `npm run dev` (demo at `http://localhost:5173/`)
 3. Open the demo in two browser tabs
 4. Enter the same session ID in both, then Connect
@@ -73,7 +105,8 @@ The interactive demo is available live at **https://signal.peer.ooo/** (Cloudfla
 
 ### Server API
 
-The signaling server accepts WebSocket connections and supports the following message types:
+The signaling server supports:
+- HTTP polling signaling (no WebSockets)
 
 #### Client → Server Messages
 
@@ -97,7 +130,7 @@ The signaling server accepts WebSocket connections and supports the following me
 ```json
 {
   "type": "offer",
-  "offer": { /* RTCSessionDescription */ },
+  "offer": "v=0\r\n...",
   "targetId": "peer-client-id",
   "sessionId": "session-123"
 }
@@ -107,7 +140,7 @@ The signaling server accepts WebSocket connections and supports the following me
 ```json
 {
   "type": "answer",
-  "answer": { /* RTCSessionDescription */ },
+  "answer": "v=0\r\n...",
   "targetId": "peer-client-id",
   "sessionId": "session-123"
 }
@@ -117,7 +150,7 @@ The signaling server accepts WebSocket connections and supports the following me
 ```json
 {
   "type": "ice-candidate",
-  "candidate": { /* RTCIceCandidate */ },
+  "candidate": "candidate:...|0|0",
   "targetId": "peer-client-id",
   "sessionId": "session-123"
 }
@@ -175,16 +208,13 @@ Use directly from npm:
 ```javascript
 // ESM (browser)
 import UniWRTCClient from 'uniwrtc/client-browser.js';
-
-// CommonJS (Node.js)
-const UniWRTCClient = require('uniwrtc/client.js');
 ```
 
 The `client.js` library provides a convenient wrapper for the signaling protocol:
 
 ```javascript
 // Create a client instance
-const client = new UniWRTCClient('ws://localhost:8080');
+const client = new UniWRTCClient('http://localhost:8080', { roomId: 'my-room' });
 
 // Set up event handlers
 client.on('connected', (data) => {
@@ -220,7 +250,7 @@ client.on('ice-candidate', (data) => {
 await client.connect();
 
 // Join a session
-client.joinSession('my-session');
+await client.joinSession('my-session');
 
 // Send WebRTC signaling messages
 client.sendOffer(offerObject, targetPeerId);
@@ -233,7 +263,7 @@ client.sendIceCandidate(candidateObject, targetPeerId);
 Here's a complete example of creating a WebRTC peer connection:
 
 ```javascript
-const client = new UniWRTCClient('ws://localhost:8080');
+const client = new UniWRTCClient('http://localhost:8080', { roomId: 'my-room' });
 const peerConnections = new Map();
 
 // ICE server configuration
@@ -281,7 +311,7 @@ client.on('peer-joined', async (data) => {
 client.on('offer', async (data) => {
   const pc = createPeerConnection(data.peerId);
   
-  await pc.setRemoteDescription(data.offer);
+  await pc.setRemoteDescription({ type: 'offer', sdp: data.offer });
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
   client.sendAnswer(answer, data.peerId);
@@ -291,7 +321,7 @@ client.on('offer', async (data) => {
 client.on('answer', async (data) => {
   const pc = peerConnections.get(data.peerId);
   if (pc) {
-    await pc.setRemoteDescription(data.answer);
+    await pc.setRemoteDescription({ type: 'answer', sdp: data.answer });
   }
 });
 
@@ -299,7 +329,12 @@ client.on('answer', async (data) => {
 client.on('ice-candidate', async (data) => {
   const pc = peerConnections.get(data.peerId);
   if (pc) {
-    await pc.addIceCandidate(data.candidate);
+    const [candidate, sdpMidRaw, sdpMLineIndexRaw] = String(data.candidate).split('|');
+    await pc.addIceCandidate(new RTCIceCandidate({
+      candidate,
+      sdpMid: sdpMidRaw || undefined,
+      sdpMLineIndex: sdpMLineIndexRaw !== undefined && sdpMLineIndexRaw !== '' ? Number(sdpMLineIndexRaw) : undefined
+    }));
   }
 });
 
@@ -307,8 +342,8 @@ client.on('ice-candidate', async (data) => {
 await client.connect();
 client.joinSession('my-video-session');
 
-// Or use Cloudflare Durable Objects deployment
-const cfClient = new UniWRTCClient('wss://signal.peer.ooo?room=my-session');
+// Or use Cloudflare Durable Objects deployment (HTTP polling; no WebSockets)
+const cfClient = new UniWRTCClient('https://signal.peer.ooo');
 await cfClient.connect();
 cfClient.joinSession('my-session');
 ```
@@ -323,7 +358,7 @@ new UniWRTCClient(serverUrl, options)
 ```
 
 **Parameters:**
-- `serverUrl` (string): WebSocket URL of the signaling server
+- `serverUrl` (string): HTTP(S) URL of the signaling server
 - `options` (object, optional):
   - `autoReconnect` (boolean): Enable automatic reconnection (default: true)
   - `reconnectDelay` (number): Delay between reconnection attempts in ms (default: 3000)
@@ -382,12 +417,17 @@ Response:
 
 ### Message Flow
 
-1. Client connects via WebSocket (or WS-over-HTTP for Cloudflare)
+1. Client connects via HTTPS (Cloudflare DO HTTP polling)
 2. Server/Durable Object assigns a unique client ID
 3. Client sends join message with session ID
 4. Server broadcasts `peer-joined` to other peers in the same session only
 5. Peers exchange WebRTC offers/answers/ICE candidates via the server
 6. Server routes signaling messages to specific peers by target ID (unicast, not broadcast)
+
+Notes:
+- Cloudflare signaling uses JSON over HTTPS requests to `/api` (polling).
+- Offers/answers are transmitted as SDP strings (text-only) in the `offer`/`answer` fields.
+- ICE candidates are transmitted as a compact text string: `candidate|sdpMid|sdpMLineIndex`.
 
 ## Security Considerations
 
@@ -395,7 +435,7 @@ This is a basic signaling server suitable for development and testing. For produ
 
 - Adding authentication and authorization
 - Implementing rate limiting
-- Using TLS/WSS for encrypted connections
+- Using TLS/HTTPS for encrypted connections
 - Adding room access controls
 - Implementing message validation
 - Monitoring and logging

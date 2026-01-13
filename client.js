@@ -1,20 +1,69 @@
 /**
- * UniWRTC Client - WebRTC Signaling Client Library
- * Simplifies connection to the UniWRTC signaling server
+ * UniWRTC Client - Node.js client (HTTP polling; no WebSockets)
  */
 
-class UniWRTCClient {
+import http from 'http';
+import https from 'https';
+
+function requestJson(urlString, { method, body } = {}) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(urlString);
+    const isHttps = url.protocol === 'https:';
+    const lib = isHttps ? https : http;
+
+    const payload = body === undefined ? null : JSON.stringify(body);
+    const req = lib.request(
+      {
+        hostname: url.hostname,
+        port: url.port || (isHttps ? 443 : 80),
+        path: url.pathname + url.search,
+        method: method || 'GET',
+        headers: {
+          ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
+          'Accept': 'application/json'
+        }
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          const status = res.statusCode || 0;
+          let parsed = null;
+          try {
+            parsed = data ? JSON.parse(data) : null;
+          } catch {
+            parsed = null;
+          }
+          if (status >= 200 && status < 300) return resolve(parsed);
+          const message = parsed?.message || `HTTP ${status}`;
+          const err = new Error(message);
+          err.status = status;
+          err.body = parsed;
+          return reject(err);
+        });
+      }
+    );
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+export class UniWRTCClient {
   constructor(serverUrl, options = {}) {
     this.serverUrl = serverUrl;
-    this.ws = null;
     this.clientId = null;
     this.sessionId = null;
-    this.peers = new Map();
+    this._pollTimer = null;
+
     this.options = {
       autoReconnect: true,
       reconnectDelay: 3000,
+      pollIntervalMs: 500,
+      roomId: options.roomId || 'default',
       ...options
     };
+
     this.eventHandlers = {
       'connected': [],
       'disconnected': [],
@@ -29,128 +78,147 @@ class UniWRTCClient {
     };
   }
 
-  connect() {
-    return new Promise((resolve, reject) => {
-      try {
-        // Get WebSocket class (browser or Node.js)
-        const WSClass = typeof WebSocket !== 'undefined' ? WebSocket : require('ws');
-        this.ws = new WSClass(this.serverUrl);
-
-        this.ws.onopen = () => {
-          console.log('Connected to signaling server');
-        };
-
-        this.ws.onmessage = (event) => {
-          try {
-            const message = JSON.parse(event.data);
-            this.handleMessage(message);
-
-            if (message.type === 'welcome') {
-              this.clientId = message.clientId;
-              this.emit('connected', { clientId: this.clientId });
-              resolve(this.clientId);
-            }
-          } catch (error) {
-            console.error('Error parsing message:', error);
-          }
-        };
-
-        this.ws.onclose = () => {
-          console.log('Disconnected from signaling server');
-          this.emit('disconnected');
-          
-          if (this.options.autoReconnect) {
-            setTimeout(() => {
-              console.log('Attempting to reconnect...');
-              this.connect();
-            }, this.options.reconnectDelay);
-          }
-        };
-
-        this.ws.onerror = (error) => {
-          console.error('WebSocket error:', error);
-          reject(error);
-        };
-      } catch (error) {
-        reject(error);
-      }
-    });
-  }
-
-  disconnect() {
-    if (this.ws) {
-      this.options.autoReconnect = false;
-      this.ws.close();
-      this.ws = null;
+  baseOrigin() {
+    const parsed = new URL(this.serverUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('Server URL must start with http(s):// (WebSockets are disabled)');
     }
+    return parsed.origin;
   }
 
-  joinSession(sessionId) {
-    this.sessionId = sessionId;
-    this.send({
-      type: 'join',
-      sessionId: sessionId
-    });
+  apiUrl(pathname, extraSearch = {}) {
+    const origin = this.baseOrigin();
+    const url = new URL(origin + pathname);
+    url.searchParams.set('room', this.options.roomId);
+    for (const [k, v] of Object.entries(extraSearch)) {
+      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+    }
+    return url.toString();
   }
 
-  leaveSession() {
-    if (this.sessionId) {
-      this.send({
-        type: 'leave',
-        sessionId: this.sessionId
+  async postJson(pathname, body) {
+    return requestJson(this.apiUrl(pathname), { method: 'POST', body });
+  }
+
+  startPolling() {
+    if (this._pollTimer) return;
+    this._pollTimer = setInterval(() => {
+      this.pollOnce().catch((err) => {
+        this.emit('error', { message: err?.message || String(err) });
       });
-      this.sessionId = null;
+    }, this.options.pollIntervalMs);
+  }
+
+  stopPolling() {
+    if (this._pollTimer) {
+      clearInterval(this._pollTimer);
+      this._pollTimer = null;
     }
   }
 
-  sendOffer(offer, targetId = null) {
-    this.send({
-      type: 'offer',
-      offer: offer,
-      targetId: targetId,
-      sessionId: this.sessionId
+  async connect() {
+    try {
+      const welcome = await this.postJson('/api/connect', {});
+      this.clientId = welcome?.clientId;
+      if (!this.clientId) throw new Error('Missing clientId from server');
+
+      if (this.options.customPeerId) {
+        const res = await this.postJson('/api/set-id', {
+          clientId: this.clientId,
+          customId: this.options.customPeerId
+        });
+        this.clientId = res?.clientId || this.clientId;
+      }
+
+      this.emit('connected', { clientId: this.clientId });
+      this.startPolling();
+      return this.clientId;
+    } catch (error) {
+      this.emit('error', { message: error?.message || String(error) });
+      if (this.options.autoReconnect) {
+        setTimeout(() => this.connect(), this.options.reconnectDelay);
+      }
+      throw error;
+    }
+  }
+
+  async disconnect() {
+    this.options.autoReconnect = false;
+    this.stopPolling();
+    if (this.clientId) {
+      try {
+        await this.postJson('/api/leave', { clientId: this.clientId });
+      } catch {
+        // ignore
+      }
+    }
+    this.emit('disconnected');
+  }
+
+  async joinSession(sessionId) {
+    if (!this.clientId) throw new Error('Not connected');
+    if (this.sessionId === sessionId) return;
+    this.sessionId = sessionId;
+
+    const joined = await this.postJson('/api/join', { clientId: this.clientId, sessionId });
+    this.emit('joined', {
+      sessionId: joined?.sessionId,
+      clientId: joined?.clientId,
+      clients: joined?.clients
     });
+  }
+
+  async leaveSession() {
+    this.sessionId = null;
+  }
+
+  async pollOnce() {
+    if (!this.clientId) return;
+    const data = await requestJson(this.apiUrl('/api/poll', { clientId: this.clientId }), { method: 'GET' });
+    const messages = Array.isArray(data?.messages) ? data.messages : [];
+    for (const msg of messages) this.handleMessage(msg);
+  }
+
+  async sendSignal(payload) {
+    if (!this.clientId) throw new Error('Not connected');
+    await this.postJson('/api/signal', {
+      clientId: this.clientId,
+      sessionId: this.sessionId,
+      ...payload
+    });
+  }
+
+  sendOffer(offer, targetId) {
+    const offerSdp = typeof offer === 'string' ? offer : offer?.sdp;
+    return this.sendSignal({ type: 'offer', offer: offerSdp, targetId });
   }
 
   sendAnswer(answer, targetId) {
-    this.send({
-      type: 'answer',
-      answer: answer,
-      targetId: targetId,
-      sessionId: this.sessionId
-    });
+    const answerSdp = typeof answer === 'string' ? answer : answer?.sdp;
+    return this.sendSignal({ type: 'answer', answer: answerSdp, targetId });
   }
 
-  sendIceCandidate(candidate, targetId = null) {
-    this.send({
-      type: 'ice-candidate',
-      candidate: candidate,
-      targetId: targetId,
-      sessionId: this.sessionId
-    });
+  sendIceCandidate(candidate, targetId) {
+    const candidateText =
+      typeof candidate === 'string'
+        ? candidate
+        : candidate && typeof candidate === 'object' && typeof candidate.candidate === 'string'
+          ? `${candidate.candidate}|${candidate.sdpMid ?? ''}|${candidate.sdpMLineIndex ?? ''}`
+          : candidate;
+    return this.sendSignal({ type: 'ice-candidate', candidate: candidateText, targetId });
   }
 
   listRooms() {
-    this.send({
-      type: 'list-rooms'
-    });
-  }
-
-  send(message) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
-    } else {
-      console.error('WebSocket is not connected');
-    }
+    console.log('Room listing not available with HTTP polling');
   }
 
   handleMessage(message) {
     switch (message.type) {
       case 'welcome':
-        // Handled in connect(), but also surface donation message
-        console.log('[UniWRTC] If this helps, consider donating ❤️ → https://coff.ee/draederg');
+        this.clientId = message.clientId;
         break;
       case 'joined':
+        this.sessionId = message.sessionId;
         this.emit('joined', {
           sessionId: message.sessionId,
           clientId: message.clientId,
@@ -158,76 +226,50 @@ class UniWRTCClient {
         });
         break;
       case 'peer-joined':
-        this.emit('peer-joined', {
-          sessionId: message.sessionId,
-          peerId: message.peerId
-        });
+        this.emit('peer-joined', { sessionId: message.sessionId, peerId: message.peerId });
         break;
       case 'peer-left':
-        this.emit('peer-left', {
-          sessionId: message.sessionId,
-          peerId: message.peerId
-        });
+        this.emit('peer-left', { sessionId: message.sessionId, peerId: message.peerId });
         break;
       case 'offer':
-        this.emit('offer', {
-          peerId: message.peerId,
-          offer: message.offer
-        });
+        this.emit('offer', { peerId: message.peerId, offer: message.offer });
         break;
       case 'answer':
-        this.emit('answer', {
-          peerId: message.peerId,
-          answer: message.answer
-        });
+        this.emit('answer', { peerId: message.peerId, answer: message.answer });
         break;
       case 'ice-candidate':
-        this.emit('ice-candidate', {
-          peerId: message.peerId,
-          candidate: message.candidate
-        });
-        break;
-      case 'room-list':
-        this.emit('room-list', {
-          rooms: message.rooms
-        });
+        this.emit('ice-candidate', { peerId: message.peerId, candidate: message.candidate });
         break;
       case 'error':
-        this.emit('error', {
-          message: message.message
-        });
+        this.emit('error', { message: message.message });
         break;
       default:
-        console.warn('Unknown message type:', message.type);
+        // ignore
+        break;
     }
   }
 
   on(event, handler) {
-    if (this.eventHandlers[event]) {
-      this.eventHandlers[event].push(handler);
-    }
+    if (this.eventHandlers[event]) this.eventHandlers[event].push(handler);
   }
 
   off(event, handler) {
     if (this.eventHandlers[event]) {
-      this.eventHandlers[event] = this.eventHandlers[event].filter(h => h !== handler);
+      this.eventHandlers[event] = this.eventHandlers[event].filter((h) => h !== handler);
     }
   }
 
   emit(event, data) {
     if (this.eventHandlers[event]) {
-      this.eventHandlers[event].forEach(handler => {
+      for (const handler of this.eventHandlers[event]) {
         try {
           handler(data);
         } catch (error) {
           console.error(`Error in ${event} handler:`, error);
         }
-      });
+      }
     }
   }
 }
 
-// Export for Node.js and browser
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { UniWRTCClient };
-}
+export default UniWRTCClient;

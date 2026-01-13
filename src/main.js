@@ -21,7 +21,7 @@ document.getElementById('app').innerHTML = `
             <div class="connection-controls">
                 <div>
                     <label style="display: block; margin-bottom: 5px; color: #64748b; font-size: 13px;">Server URL</label>
-                    <input type="text" id="serverUrl" data-testid="serverUrl" placeholder="wss://signal.peer.ooo or ws://localhost:8080" value="wss://signal.peer.ooo">
+                    <input type="text" id="serverUrl" data-testid="serverUrl" placeholder="https://signal.peer.ooo or http://localhost:8080" value="https://signal.peer.ooo">
                 </div>
                 <div>
                     <label style="display: block; margin-bottom: 5px; color: #64748b; font-size: 13px;">Room / Session ID</label>
@@ -146,6 +146,43 @@ function updatePeerList() {
     }
 }
 
+function normalizeSessionDescription(descOrSdp, fallbackType) {
+    if (!descOrSdp) {
+        throw new Error(`Missing ${fallbackType} SDP`);
+    }
+
+    if (typeof descOrSdp === 'string') {
+        return { type: fallbackType, sdp: descOrSdp };
+    }
+
+    if (typeof descOrSdp === 'object') {
+        if (typeof descOrSdp.sdp === 'string') {
+            return {
+                type: descOrSdp.type || fallbackType,
+                sdp: descOrSdp.sdp
+            };
+        }
+    }
+
+    return descOrSdp;
+}
+
+function normalizeIceCandidate(candidateOrText) {
+    if (!candidateOrText) return null;
+    if (typeof candidateOrText === 'string') {
+        const [candidate, sdpMidRaw, sdpMLineIndexRaw] = candidateOrText.split('|');
+        if (!candidate) return null;
+        const ice = { candidate };
+        if (sdpMidRaw) ice.sdpMid = sdpMidRaw;
+        if (sdpMLineIndexRaw !== undefined && sdpMLineIndexRaw !== '') {
+            const idx = Number(sdpMLineIndexRaw);
+            if (!Number.isNaN(idx)) ice.sdpMLineIndex = idx;
+        }
+        return ice;
+    }
+    return candidateOrText;
+}
+
 window.connect = async function() {
     const serverUrl = document.getElementById('serverUrl').value.trim();
     const roomId = document.getElementById('roomId').value.trim();
@@ -162,15 +199,15 @@ window.connect = async function() {
 
     try {
             log(`Connecting to ${serverUrl}...`, 'info');
-        
-        // For Cloudflare, use /ws endpoint with room ID query param
-        let finalUrl = serverUrl;
-        if (serverUrl.includes('signal.peer.ooo')) {
-                finalUrl = `${serverUrl.replace(/\/$/, '')}/ws?room=${roomId}`;
-                log(`Using Cloudflare Durable Objects with session: ${roomId}`, 'info');
+
+        const isHttpUrl = /^https?:\/\//i.test(serverUrl);
+        if (!isHttpUrl) {
+            throw new Error('Server URL must start with http(s):// (WebSockets are disabled)');
         }
-        
-        client = new UniWRTCClient(finalUrl, { autoReconnect: false });
+
+        // HTTP polling signaling (no WebSockets)
+        client = new UniWRTCClient(serverUrl, { autoReconnect: false, roomId });
+        log(`Using HTTP polling (no WebSockets) for room: ${roomId}`, 'info');
         
         client.on('connected', (data) => {
                 log(`Connected with client ID: ${data.clientId}`, 'success');
@@ -224,7 +261,7 @@ window.connect = async function() {
         client.on('offer', async (data) => {
                 log(`Received offer from ${data.peerId.substring(0, 6)}...`, 'info');
             const pc = peerConnections.get(data.peerId) || await createPeerConnection(data.peerId, false);
-            await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+            await pc.setRemoteDescription(normalizeSessionDescription(data.offer, 'offer'));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             client.sendAnswer(answer, data.peerId);
@@ -235,7 +272,7 @@ window.connect = async function() {
                 log(`Received answer from ${data.peerId.substring(0, 6)}...`, 'info');
             const pc = peerConnections.get(data.peerId);
             if (pc) {
-                await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+                await pc.setRemoteDescription(normalizeSessionDescription(data.answer, 'answer'));
             }
         });
 
@@ -243,7 +280,10 @@ window.connect = async function() {
                 log(`Received ICE candidate from ${data.peerId.substring(0, 6)}...`, 'info');
             const pc = peerConnections.get(data.peerId);
             if (pc && data.candidate) {
-                await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                const iceInit = normalizeIceCandidate(data.candidate);
+                if (iceInit) {
+                    await pc.addIceCandidate(new RTCIceCandidate(iceInit));
+                }
             }
         });
 
@@ -289,9 +329,9 @@ async function createPeerConnection(peerId, shouldInitiate) {
         log(`Creating peer connection with ${peerId.substring(0, 6)}... (shouldInitiate: ${shouldInitiate})`, 'info');
 
     const pc = new RTCPeerConnection({
-        iceServers: [
-            { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
-        ]
+        // Avoid external STUN for reliability in restricted environments.
+        // Host candidates are sufficient for same-device/browser-tab testing.
+        iceServers: []
     });
 
     pc.onicecandidate = (event) => {

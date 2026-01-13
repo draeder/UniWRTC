@@ -53,19 +53,26 @@ name = "uniwrtc"
 main = "src/index.js"
 compatibility_date = "2024-12-20"
 
-[env.production]
-routes = [
-  { pattern = "${FULL_DOMAIN}/*", zone_name = "${DOMAIN}" }
-]
+assets = { directory = "./dist", binding = "ASSETS" }
 
 [[durable_objects.bindings]]
 name = "ROOMS"
 class_name = "Room"
 
-[durable_objects]
-migrations = [
-  { tag = "v1", new_classes = ["Room"] }
+[[migrations]]
+tag = "v1"
+new_classes = ["Room"]
+
+[env.production]
+routes = [
+  { pattern = "${FULL_DOMAIN}/*", zone_name = "${DOMAIN}" }
 ]
+
+assets = { directory = "./dist", binding = "ASSETS" }
+
+[[env.production.durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
 
 [build]
 command = "npm install"

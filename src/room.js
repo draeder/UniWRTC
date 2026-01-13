@@ -1,212 +1,180 @@
 /**
- * Durable Object for WebRTC Signaling Room
- * Manages peers in a room and routes signaling messages
+ * Durable Object for WebRTC signaling (HTTP polling only)
  */
 export class Room {
   constructor(state, env) {
     this.state = state;
     this.env = env;
-    this.clients = new Map(); // Map of clientId -> WebSocket
+
+    // HTTP mode (no WebSockets)
+    this.httpClients = new Map(); // clientId -> { lastSeen: number, sessionId: string | null }
+    this.httpQueues = new Map(); // clientId -> Array<message>
   }
 
   async fetch(request) {
+    const url = new URL(request.url);
+
     if (request.headers.get('Upgrade') === 'websocket') {
-      const [client, server] = Object.values(new WebSocketPair());
-      server.accept();
-
-      const clientId = crypto.randomUUID().substring(0, 9);
-      this.clients.set(clientId, server);
-
-      console.log(`[Room] Client ${clientId} connected (total: ${this.clients.size})`);
-
-      // Send welcome message
-      server.send(JSON.stringify({
-        type: 'welcome',
-        clientId: clientId,
-        message: 'Connected to UniWRTC signaling room'
-      }));
-
-      // NOTE: peer-joined is sent when client explicitly joins via 'join' message
-
-      server.onmessage = async (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          await this.handleMessage(clientId, message);
-        } catch (error) {
-          console.error('[Room] Message error:', error);
-          server.send(JSON.stringify({ type: 'error', message: error.message }));
-        }
-      };
-
-      server.onclose = () => {
-        console.log(`[Room] Client ${clientId} left`);
-        this.clients.delete(clientId);
-        // Note: sessionId should be tracked per client if needed
-        this.broadcast({
-          type: 'peer-left',
-          peerId: clientId
-        });
-      };
-
-      server.onerror = (error) => {
-        console.error('[Room] WebSocket error:', error);
-      };
-
-      return new Response(null, { status: 101, webSocket: client });
+      return new Response('WebSockets disabled; use /api (HTTP polling)', { status: 410 });
     }
 
-    return new Response('Not a WebSocket request', { status: 400 });
+    // HTTP signaling API (no WebSockets)
+    if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
+      return this.handleHttpApi(request, url);
+    }
+
+    return new Response('Not Found', { status: 404 });
   }
 
-  async handleMessage(clientId, message) {
-    switch (message.type) {
-      case 'join':
-        await this.handleJoin(clientId, message);
-        break;
-      case 'set-id':
-        await this.handleSetId(clientId, message);
-        break;
-      case 'offer':
-      case 'answer':
-      case 'ice-candidate':
-        await this.handleSignaling(clientId, message);
-        break;
-      default:
-        console.log(`[Room] Unknown message type: ${message.type}`);
-    }
-  }
-
-  async handleJoin(clientId, message) {
-    const { sessionId, peerId } = message;
-    
-    console.log(`[Room] Client ${clientId} joining session ${sessionId}`);
-    
-    // Get list of other peers
-    const peers = Array.from(this.clients.keys())
-      .filter(id => id !== clientId);
-    
-    console.log(`[Room] Existing peers in session:`, peers);
-    
-    const client = this.clients.get(clientId);
-    if (client && client.readyState === WebSocket.OPEN) {
-      // Send joined confirmation (align with server schema)
-      client.send(JSON.stringify({
-        type: 'joined',
-        sessionId: sessionId,
-        clientId: clientId,
-        clients: peers
-      }));
-    }
-    
-    // Notify other peers
-    console.log(`[Room] Broadcasting peer-joined for ${clientId}`);
-    this.broadcast({
-      type: 'peer-joined',
-      sessionId: sessionId,
-      peerId: clientId
-    }, clientId);
-  }
-
-  async handleSetId(clientId, message) {
-    const { customId } = message;
-    
-    if (!customId || customId.length < 3 || customId.length > 20) {
-      const client = this.clients.get(clientId);
-      if (client && client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({
-          type: 'error',
-          message: 'Custom ID must be 3-20 characters'
-        }));
+  json(data, status = 200) {
+    return new Response(JSON.stringify(data), {
+      status,
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store'
       }
-      return;
-    }
-
-    // Check if ID is already taken
-    let idTaken = false;
-    for (const [id, ws] of this.clients) {
-      if (id !== clientId && id === customId) {
-        idTaken = true;
-        break;
-      }
-    }
-
-    if (idTaken) {
-      const client = this.clients.get(clientId);
-      if (client && client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({
-          type: 'error',
-          message: 'Peer ID already taken'
-        }));
-      }
-      return;
-    }
-
-    // Update client ID
-    const ws = this.clients.get(clientId);
-    this.clients.delete(clientId);
-    this.clients.set(customId, ws);
-
-    console.log(`[Room] Client changed ID from ${clientId} to ${customId}`);
-
-    // Send confirmation
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'welcome',
-        clientId: customId,
-        message: 'Custom peer ID set'
-      }));
-    }
-
-    // Notify others of ID change
-    this.broadcast({
-      type: 'peer-id-changed',
-      oldId: clientId,
-      newId: customId
     });
   }
 
-  async handleSignaling(clientId, message) {
-    const { targetId, type, offer, answer, candidate } = message;
-
-    if (!targetId) {
-      console.log(`[Room] Signaling without target`);
-      return;
-    }
-
-    const targetClient = this.clients.get(targetId);
-    if (!targetClient || targetClient.readyState !== WebSocket.OPEN) {
-      console.log(`[Room] Target client ${targetId} not found or closed`);
-      const client = this.clients.get(clientId);
-      if (client && client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({
-          type: 'error',
-          message: `Target peer ${targetId} not found`
-        }));
-      }
-      return;
-    }
-
-    console.log(`[Room] Routing ${type} from ${clientId} to ${targetId}`);
-
-    // Route signaling message to target
-    const forwardMessage = {
-      type: type,
-      peerId: clientId
-    };
-
-    if (offer) forwardMessage.offer = offer;
-    if (answer) forwardMessage.answer = answer;
-    if (candidate) forwardMessage.candidate = candidate;
-
-    targetClient.send(JSON.stringify(forwardMessage));
+  ensureHttpQueue(clientId) {
+    if (!this.httpQueues.has(clientId)) this.httpQueues.set(clientId, []);
+    return this.httpQueues.get(clientId);
   }
 
-  broadcast(message, excludeClientId = null) {
-    const payload = JSON.stringify(message);
-    for (const [clientId, client] of this.clients) {
-      if (clientId !== excludeClientId && client.readyState === WebSocket.OPEN) {
-        client.send(payload);
+  enqueueHttpMessage(clientId, message) {
+    const queue = this.ensureHttpQueue(clientId);
+    queue.push(message);
+  }
+
+  pruneHttpClients(now = Date.now()) {
+    const STALE_MS = 60_000;
+    const stale = [];
+    for (const [id, meta] of this.httpClients) {
+      if (now - meta.lastSeen > STALE_MS) stale.push(id);
+    }
+    for (const id of stale) {
+      this.httpClients.delete(id);
+      this.httpQueues.delete(id);
+      for (const [otherId] of this.httpClients) {
+        this.enqueueHttpMessage(otherId, { type: 'peer-left', peerId: id, sessionId: null });
       }
     }
+  }
+
+  async readJson(request) {
+    try {
+      return await request.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async handleHttpApi(request, url) {
+    this.pruneHttpClients();
+
+    const path = url.pathname;
+
+    if (request.method === 'POST' && (path === '/api/connect' || path === '/api')) {
+      const clientId = crypto.randomUUID().substring(0, 9);
+      this.httpClients.set(clientId, { lastSeen: Date.now(), sessionId: null });
+      this.ensureHttpQueue(clientId);
+      return this.json({ type: 'welcome', clientId, message: 'Connected (HTTP polling)' });
+    }
+
+    if (request.method === 'POST' && path === '/api/set-id') {
+      const body = await this.readJson(request);
+      const { clientId, customId } = body || {};
+      if (!clientId || !this.httpClients.has(clientId)) return this.json({ type: 'error', message: 'Unknown clientId' }, 400);
+      if (!customId || customId.length < 3 || customId.length > 20) return this.json({ type: 'error', message: 'Custom ID must be 3-20 characters' }, 400);
+      if (this.httpClients.has(customId)) return this.json({ type: 'error', message: 'Peer ID already taken' }, 409);
+
+      const meta = this.httpClients.get(clientId);
+      const queue = this.ensureHttpQueue(clientId);
+
+      this.httpClients.delete(clientId);
+      this.httpClients.set(customId, { ...meta, lastSeen: Date.now() });
+      this.httpQueues.delete(clientId);
+      this.httpQueues.set(customId, queue);
+
+      for (const [otherId] of this.httpClients) {
+        if (otherId !== customId) {
+          this.enqueueHttpMessage(otherId, { type: 'peer-id-changed', oldId: clientId, newId: customId });
+        }
+      }
+
+      return this.json({ type: 'welcome', clientId: customId, message: 'Custom peer ID set' });
+    }
+
+    if (request.method === 'POST' && path === '/api/join') {
+      const body = await this.readJson(request);
+      const { clientId, sessionId } = body || {};
+      if (!clientId || !this.httpClients.has(clientId)) return this.json({ type: 'error', message: 'Unknown clientId' }, 400);
+
+      const meta = this.httpClients.get(clientId);
+      meta.lastSeen = Date.now();
+      meta.sessionId = sessionId || meta.sessionId || null;
+
+      const peers = Array.from(this.httpClients.keys()).filter(id => id !== clientId);
+
+      for (const [otherId, otherMeta] of this.httpClients) {
+        if (otherId !== clientId) {
+          this.enqueueHttpMessage(otherId, { type: 'peer-joined', peerId: clientId, sessionId: otherMeta.sessionId || meta.sessionId || null });
+        }
+      }
+
+      return this.json({
+        type: 'joined',
+        sessionId: meta.sessionId,
+        clientId,
+        clients: peers
+      });
+    }
+
+    if (request.method === 'POST' && path === '/api/leave') {
+      const body = await this.readJson(request);
+      const { clientId } = body || {};
+      if (!clientId || !this.httpClients.has(clientId)) return this.json({ type: 'error', message: 'Unknown clientId' }, 400);
+
+      this.httpClients.delete(clientId);
+      this.httpQueues.delete(clientId);
+      for (const [otherId] of this.httpClients) {
+        this.enqueueHttpMessage(otherId, { type: 'peer-left', peerId: clientId, sessionId: null });
+      }
+      return this.json({ ok: true });
+    }
+
+    if (request.method === 'POST' && path === '/api/signal') {
+      const body = await this.readJson(request);
+      const { clientId, targetId, type, offer, answer, candidate, sessionId } = body || {};
+      if (!clientId || !this.httpClients.has(clientId)) return this.json({ type: 'error', message: 'Unknown clientId' }, 400);
+      if (!targetId) return this.json({ type: 'error', message: 'targetId is required' }, 400);
+      if (!this.httpClients.has(targetId)) return this.json({ type: 'error', message: `Target peer ${targetId} not found` }, 404);
+      if (!type) return this.json({ type: 'error', message: 'type is required' }, 400);
+
+      const meta = this.httpClients.get(clientId);
+      meta.lastSeen = Date.now();
+      if (sessionId && !meta.sessionId) meta.sessionId = sessionId;
+
+      const forwardMessage = { type, peerId: clientId };
+      if (offer) forwardMessage.offer = offer;
+      if (answer) forwardMessage.answer = answer;
+      if (candidate) forwardMessage.candidate = candidate;
+
+      this.enqueueHttpMessage(targetId, forwardMessage);
+      return this.json({ ok: true });
+    }
+
+    if (request.method === 'GET' && path === '/api/poll') {
+      const clientId = url.searchParams.get('clientId');
+      if (!clientId || !this.httpClients.has(clientId)) return this.json({ type: 'error', message: 'Unknown clientId' }, 400);
+      const meta = this.httpClients.get(clientId);
+      meta.lastSeen = Date.now();
+
+      const queue = this.ensureHttpQueue(clientId);
+      const messages = queue.splice(0, queue.length);
+      return this.json({ messages });
+    }
+
+    return this.json({ type: 'error', message: 'Not Found' }, 404);
   }
 }
