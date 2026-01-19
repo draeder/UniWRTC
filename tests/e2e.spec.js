@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('UniWRTC Demo - Full Integration Tests', () => {
-  const ROOM_ID = 'test';
+  const randomRoomId = (prefix = 'e2e') => {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  };
   
   test.describe('Connection and Session Management', () => {
     test('should load demo page and display UI', async ({ page }) => {
@@ -18,6 +20,9 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
     test('should connect to relay and join room', async ({ page }) => {
       test.setTimeout(60_000);
       await page.goto('/');
+
+      // Use a unique room per test run to avoid interference from relay history.
+      await page.getByTestId('roomId').fill(randomRoomId('connect'));
       
       // Click connect
       await page.getByTestId('connectBtn').click();
@@ -40,6 +45,9 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
     test('should handle disconnect', async ({ page }) => {
       test.setTimeout(60_000);
       await page.goto('/');
+
+      // Use a unique room per test run to avoid interference from relay history.
+      await page.getByTestId('roomId').fill(randomRoomId('disconnect'));
       
       // Connect first
       await page.getByTestId('connectBtn').click();
@@ -56,6 +64,8 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
 
   test.describe('Multi-peer Session', () => {
     test('should connect three peers and see peer-joined notifications', async ({ browser }) => {
+      const roomId = randomRoomId('multi');
+
       // Open three browser contexts (simulating three users)
       const context1 = await browser.newContext();
       const page1 = await context1.newPage();
@@ -73,9 +83,9 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
         await page3.goto('/?ice=host');
         
         // Use shared room ID for all three peers
-        await page1.getByTestId('roomId').fill(ROOM_ID);
-        await page2.getByTestId('roomId').fill(ROOM_ID);
-        await page3.getByTestId('roomId').fill(ROOM_ID);
+        await page1.getByTestId('roomId').fill(roomId);
+        await page2.getByTestId('roomId').fill(roomId);
+        await page3.getByTestId('roomId').fill(roomId);
         
         // Connect peer 1
         await page1.getByTestId('connectBtn').click();
@@ -113,6 +123,7 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
 
     test('should open P2P data channels between three peers', async ({ browser }) => {
       test.setTimeout(90_000);
+      const roomId = randomRoomId('dc');
       const context1 = await browser.newContext();
       const page1 = await context1.newPage();
       
@@ -128,9 +139,9 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
         await page2.goto('/?ice=host');
         await page3.goto('/?ice=host');
         
-        await page1.getByTestId('roomId').fill(ROOM_ID);
-        await page2.getByTestId('roomId').fill(ROOM_ID);
-        await page3.getByTestId('roomId').fill(ROOM_ID);
+        await page1.getByTestId('roomId').fill(roomId);
+        await page2.getByTestId('roomId').fill(roomId);
+        await page3.getByTestId('roomId').fill(roomId);
         
         await page1.getByTestId('connectBtn').click();
         await expect(page1.getByTestId('log-connected')).toBeVisible({ timeout: 20000 });
@@ -182,6 +193,7 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
 
     test('should send P2P chat messages between three peers', async ({ browser }) => {
       test.setTimeout(90_000);
+      const roomId = randomRoomId('chat');
       const context1 = await browser.newContext();
       const page1 = await context1.newPage();
       
@@ -197,9 +209,9 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
         await page2.goto('/?ice=host');
         await page3.goto('/?ice=host');
         
-        await page1.getByTestId('roomId').fill(ROOM_ID);
-        await page2.getByTestId('roomId').fill(ROOM_ID);
-        await page3.getByTestId('roomId').fill(ROOM_ID);
+        await page1.getByTestId('roomId').fill(roomId);
+        await page2.getByTestId('roomId').fill(roomId);
+        await page3.getByTestId('roomId').fill(roomId);
         
         await page1.getByTestId('connectBtn').click();
         await expect(page1.getByTestId('log-connected')).toBeVisible({ timeout: 20000 });
