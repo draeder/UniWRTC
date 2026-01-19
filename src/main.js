@@ -1,6 +1,7 @@
 import './style.css';
 import UniWRTCClient from '../client-browser.js';
 import { createNostrClient } from './nostr/nostrClient.js';
+import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 
 // Make UniWRTCClient available globally for backwards compatibility
 window.UniWRTCClient = UniWRTCClient;
@@ -30,6 +31,35 @@ const peerConnections = new Map();
 const dataChannels = new Map();
 const pendingIce = new Map();
 const outboundIceBatches = new Map();
+
+function bytesToHex(bytes) {
+    return Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+function isHex64(s) {
+    return typeof s === 'string' && /^[0-9a-fA-F]{64}$/.test(s);
+}
+
+function ensureIdentity() {
+    // Must match the key used in createNostrClient() so the pubkey stays consistent.
+    const storageKey = 'nostr-secret-key-tab';
+    let stored = sessionStorage.getItem(storageKey);
+
+    if (stored && stored.includes(',')) {
+        sessionStorage.removeItem(storageKey);
+        stored = null;
+    }
+
+    if (!isHex64(stored)) {
+        const secretBytes = generateSecretKey();
+        stored = bytesToHex(secretBytes);
+        sessionStorage.setItem(storageKey, stored);
+    }
+
+    return getPublicKey(stored);
+}
 
 // Initialize app
 document.getElementById('app').innerHTML = `
@@ -111,6 +141,19 @@ if (urlRoom) {
     roomInput.value = defaultRoom;
     log(`Using default room ID: ${defaultRoom}`, 'info');
 }
+
+// Client/session identity should not depend on relay connectivity.
+try {
+    myPeerId = ensureIdentity();
+    document.getElementById('clientId').textContent = myPeerId.substring(0, 16) + '...';
+} catch {
+    // Leave as-is if identity init fails.
+}
+
+document.getElementById('sessionId').textContent = roomInput.value || 'Not joined';
+roomInput.addEventListener('input', () => {
+    document.getElementById('sessionId').textContent = roomInput.value.trim() || 'Not joined';
+});
 
 // STUN-only ICE servers (no TURN)
 const ICE_SERVERS = [
@@ -354,7 +397,7 @@ async function connectNostr() {
         }
 
         // Reset local peer state to avoid stale sessions targeting the wrong browser tab.
-        myPeerId = null;
+        myPeerId = myPeerId || ensureIdentity();
         mySessionNonce = null;
         peerSessions.clear();
         peerProbeState.clear();
@@ -389,8 +432,7 @@ async function connectNostr() {
 
         // Identity must be ready before we connect/subscribe; inbound events can arrive immediately.
         // Any client instance will derive the same per-tab keypair.
-        const identityClient = createNostrClient({ relayUrl: relayCandidates[0], room: effectiveRoom });
-        const myPubkey = identityClient.getPublicKey();
+        const myPubkey = myPeerId || ensureIdentity();
         myPeerId = myPubkey;
         mySessionNonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
         document.getElementById('clientId').textContent = myPubkey.substring(0, 16) + '...';
@@ -793,7 +835,6 @@ window.disconnect = function() {
     if (nostrClient) {
         nostrClient.disconnect().catch(() => {});
         nostrClient = null;
-        myPeerId = null;
         mySessionNonce = null;
         peerSessions.clear();
         peerProbeState.clear();
