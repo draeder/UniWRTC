@@ -1,8 +1,24 @@
-# Quick Start - Deploy to Cloudflare in 30 seconds
+# Quick Start - Deploy to Cloudflare
+
+## Option A (No Durable Objects): Cloudflare Pages (static)
+
+This repo’s current demo works client-side (Nostr), so you can deploy just the static site to Cloudflare Pages.
+
+### Prerequisites
+- Cloudflare account (free tier works)
+- Node.js installed
+- Wrangler CLI authenticated (`npx wrangler login`)
+
+### Deploy
+```bash
+npm install
+npm run deploy:cf:no-do
+```
+
+Wrangler will prompt you to pick/create a Pages project the first time.
 
 ## Prerequisites
 - Cloudflare account (free tier works)
-- Your domain on Cloudflare
 - Node.js installed
 
 ## Deploy
@@ -18,38 +34,12 @@ chmod +x deploy-cloudflare.sh
 deploy-cloudflare.bat
 ```
 
-## What the script does:
-1. ✅ Checks Node.js and installs Wrangler
-2. ✅ Authenticates with Cloudflare
-3. ✅ Asks for your domain (e.g., `signal.peer.ooo`)
-4. ✅ Updates `wrangler.toml`
-5. ✅ Deploys to Cloudflare Workers
-6. ✅ Gives you the live URL
+## What this does
+1. ✅ Builds the Vite site into `dist/`
+2. ✅ Deploys `dist/` to Cloudflare Pages
 
 ## After deployment:
 
-Update demo.html:
-```javascript
-const serverUrl = 'https://signal.peer.ooo/'; // Your domain
-```
+Then set your custom domain in Cloudflare Pages (and point `signal` to `<project>.pages.dev`).
 
-Then reload the demo and it will connect to your Cloudflare Workers signaling server! 🚀
-
-## Testing
-
-Test the server:
-```bash
-curl https://signal.peer.ooo/health
-```
-
-View logs:
-```bash
-wrangler tail --env production
-```
-
-Local development:
-```bash
-wrangler dev
-```
-
-That's it! Your WebRTC signaling is now on Cloudflare! 🎉
+That's it! Your demo is now on Cloudflare Pages (no Durable Objects).

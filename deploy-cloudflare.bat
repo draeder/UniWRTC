@@ -1,9 +1,10 @@
 @echo off
-REM UniWRTC Cloudflare Automated Setup Script (Windows)
+REM UniWRTC Cloudflare Automated Setup Script (Windows, NO Durable Objects)
+REM Deploys the static demo to Cloudflare Pages.
 
 setlocal enabledelayedexpansion
 
-echo 🚀 UniWRTC Cloudflare Setup
+echo 🚀 UniWRTC Cloudflare Setup (Pages / no Durable Objects)
 echo ============================
 echo.
 
@@ -40,74 +41,29 @@ if errorlevel 1 (
 echo ✅ Authenticated with Cloudflare
 echo.
 
-REM Ask for domain
-echo 🌐 Domain Configuration
-echo =====================
-set /p DOMAIN="Enter your Cloudflare domain (e.g., peer.ooo): "
-set /p SUBDOMAIN="Enter subdomain for signaling (e.g., signal): "
+REM Project name
+set PROJECT_NAME=signal-peer-ooo
+if not "%~1"=="" set PROJECT_NAME=%~1
 
-if "!DOMAIN!"=="" (
-  echo ❌ Domain required
-  exit /b 1
-)
+echo 📦 Building static site...
+call npm run build
 
-if "!SUBDOMAIN!"=="" (
-  echo ❌ Subdomain required
-  exit /b 1
-)
-
-set FULL_DOMAIN=!SUBDOMAIN!.!DOMAIN!
-
-REM Update wrangler.toml
-echo 📝 Updating wrangler.toml...
-(
-  echo name = "uniwrtc"
-  echo main = "src/index.js"
-  echo compatibility_date = "2024-12-20"
-  echo.
-  echo [env.production]
-  echo routes = [
-  echo   { pattern = "!FULL_DOMAIN!/*", zone_name = "!DOMAIN!" }
-  echo ]
-  echo.
-  echo [[durable_objects.bindings]]
-  echo name = "ROOMS"
-  echo class_name = "Room"
-  echo.
-  echo [durable_objects]
-  echo migrations = [
-  echo   { tag = "v1", new_classes = ["Room"] }
-  echo ]
-  echo.
-  echo [build]
-  echo command = "npm install"
-) > wrangler.toml
-
-echo ✅ wrangler.toml updated
+echo 🚀 Deploying to Cloudflare Pages project: %PROJECT_NAME%
 echo.
+
+REM Create project if needed (ignore errors)
+call npx wrangler pages project create %PROJECT_NAME% --production-branch main >nul 2>nul
 
 REM Deploy
-echo 🚀 Deploying to Cloudflare...
-echo.
-call wrangler deploy --env production
+call npx wrangler pages deploy dist --project-name %PROJECT_NAME%
 
 echo.
 echo ✅ Deployment Complete!
 echo.
-echo 🎉 Your UniWRTC signaling server is live at:
-echo    https://!FULL_DOMAIN!/
-echo.
-echo 📊 Test it:
-echo    curl https://!FULL_DOMAIN!/health
-echo.
-echo 🧪 Local testing:
-echo    wrangler dev
-echo.
-echo 📊 View logs:
-echo    wrangler tail --env production
-echo.
-echo 🛠️  Next: Update demo.html to use:
-echo    const serverUrl = 'https://!FULL_DOMAIN!/';
+echo 🎉 Your Pages site is deployed.
+echo Next step for custom domain (manual in Cloudflare UI):
+echo   - Pages ^> %PROJECT_NAME% ^> Custom domains ^> add signal.peer.ooo
+echo   - DNS: CNAME signal ^> %PROJECT_NAME%.pages.dev
 echo.
 
 endlocal

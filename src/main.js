@@ -7,6 +7,7 @@ window.UniWRTCClient = UniWRTCClient;
 
 // Nostr is the default transport (no toggle)
 let nostrClient = null;
+let myPeerId = null;
 
 let client = null;
 const peerConnections = new Map();
@@ -154,6 +155,31 @@ window.connect = async function() {
     await connectNostr();
 };
 
+function shouldInitiateWith(peerId) {
+    // Deterministic initiator to avoid offer glare
+    if (!myPeerId) return false;
+    return myPeerId.localeCompare(peerId) < 0;
+}
+
+function sendSignal(to, payload) {
+    if (!nostrClient) throw new Error('Not connected to Nostr');
+    return nostrClient.send({
+        ...payload,
+        to,
+    });
+}
+
+async function ensurePeerConnection(peerId) {
+    if (!peerId || peerId === myPeerId) return null;
+    if (peerConnections.has(peerId) && peerConnections.get(peerId) instanceof RTCPeerConnection) {
+        return peerConnections.get(peerId);
+    }
+
+    const initiator = shouldInitiateWith(peerId);
+    const pc = await createPeerConnection(peerId, initiator);
+    return pc;
+}
+
 async function connectNostr() {
     const relayUrl = document.getElementById('relayUrl').value.trim();
     const roomIdInput = document.getElementById('roomId');
@@ -182,22 +208,65 @@ async function connectNostr() {
                 if (state === 'connected') updateStatus(true);
                 if (state === 'disconnected') updateStatus(false);
             },
-            onMessage: ({ from, text }) => {
-                displayChatMessage(text, from, false);
-            },
-            onPeer: ({ peerId }) => {
+            onPayload: async ({ from, payload }) => {
+                const peerId = from;
+                if (!peerId || peerId === myPeerId) return;
+
                 // Use the existing peer list UI as a simple "seen peers" list
                 if (!peerConnections.has(peerId)) {
                     peerConnections.set(peerId, null);
                     updatePeerList();
                     log(`Peer seen: ${peerId.substring(0, 6)}...`, 'success');
                 }
-            }
+
+                if (!payload || typeof payload !== 'object') return;
+
+                // Presence
+                if (payload.type === 'hello') {
+                    await ensurePeerConnection(peerId);
+                    return;
+                }
+
+                // Signaling messages are always targeted
+                if (payload.to && payload.to !== myPeerId) return;
+
+                if (payload.type === 'signal-offer' && payload.sdp) {
+                    log(`Received offer from ${peerId.substring(0, 6)}...`, 'info');
+                    const pc = await ensurePeerConnection(peerId);
+                    await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    await sendSignal(peerId, { type: 'signal-answer', sdp: pc.localDescription });
+                    log(`Sent answer to ${peerId.substring(0, 6)}...`, 'success');
+                    return;
+                }
+
+                if (payload.type === 'signal-answer' && payload.sdp) {
+                    log(`Received answer from ${peerId.substring(0, 6)}...`, 'info');
+                    const pc = peerConnections.get(peerId);
+                    if (pc instanceof RTCPeerConnection) {
+                        await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+                    }
+                    return;
+                }
+
+                if (payload.type === 'signal-ice' && payload.candidate) {
+                    const pc = peerConnections.get(peerId);
+                    if (pc instanceof RTCPeerConnection) {
+                        try {
+                            await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
+                        } catch (e) {
+                            log(`Failed to add ICE candidate: ${e?.message || e}`, 'warning');
+                        }
+                    }
+                }
+            },
         });
 
         await nostrClient.connect();
 
         const myPubkey = nostrClient.getPublicKey();
+        myPeerId = myPubkey;
         document.getElementById('clientId').textContent = myPubkey.substring(0, 16) + '...';
         document.getElementById('sessionId').textContent = effectiveRoom;
         log(`Joined Nostr room: ${effectiveRoom}`, 'success');
@@ -336,6 +405,13 @@ window.disconnect = function() {
     if (nostrClient) {
         nostrClient.disconnect().catch(() => {});
         nostrClient = null;
+        myPeerId = null;
+        peerConnections.forEach((pc) => {
+            if (pc instanceof RTCPeerConnection) pc.close();
+        });
+        peerConnections.clear();
+        dataChannels.clear();
+        updatePeerList();
     }
     if (client) {
         client.disconnect();
@@ -366,7 +442,11 @@ async function createPeerConnection(peerId, shouldInitiate) {
     pc.onicecandidate = (event) => {
         if (event.candidate) {
                 log(`Sending ICE candidate to ${peerId.substring(0, 6)}...`, 'info');
-            client.sendIceCandidate(event.candidate, peerId);
+            if (nostrClient) {
+                sendSignal(peerId, { type: 'signal-ice', candidate: event.candidate.toJSON?.() || event.candidate });
+            } else if (client) {
+                client.sendIceCandidate(event.candidate, peerId);
+            }
         }
     };
 
@@ -381,7 +461,11 @@ async function createPeerConnection(peerId, shouldInitiate) {
         
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        client.sendOffer(offer, peerId);
+        if (nostrClient) {
+            await sendSignal(peerId, { type: 'signal-offer', sdp: pc.localDescription });
+        } else if (client) {
+            client.sendOffer(offer, peerId);
+        }
             log(`Sent offer to ${peerId.substring(0, 6)}...`, 'success');
     } else {
             log(`Waiting for offer from ${peerId.substring(0, 6)}...`, 'info');
@@ -416,17 +500,8 @@ window.sendChatMessage = function() {
         return;
     }
 
-    if (nostrClient) {
-        nostrClient.sendMessage(message).catch((e) => {
-            log(`Failed to send via Nostr: ${e?.message || e}`, 'error');
-        });
-        displayChatMessage(message, 'You', true);
-        document.getElementById('chatMessage').value = '';
-        return;
-    }
-
     if (dataChannels.size === 0) {
-        log('No peer connections available. Wait for data channels to open.', 'error');
+        log('No data channels yet. Open this room in another tab/browser and wait for WebRTC to connect.', 'error');
         return;
     }
 

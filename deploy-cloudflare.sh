@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# UniWRTC Cloudflare Automated Setup Script
-# Run this to setup and deploy to Cloudflare
+# UniWRTC Cloudflare Automated Setup Script (NO Durable Objects)
+# Deploys the static demo to Cloudflare Pages.
 
 set -e
 
-echo "🚀 UniWRTC Cloudflare Setup"
+echo "🚀 UniWRTC Cloudflare Setup (Pages / no Durable Objects)"
 echo "============================"
 echo ""
 
@@ -41,67 +41,24 @@ fi
 echo "✅ Authenticated with Cloudflare"
 echo ""
 
-# Domain configuration
-DOMAIN="peer.ooo"
-SUBDOMAIN="signal"
+PROJECT_NAME=${1:-"signal-peer-ooo"}
 
-FULL_DOMAIN="${SUBDOMAIN}.${DOMAIN}"
+echo "📦 Building static site..."
+npm run build
 
-echo "📝 Updating wrangler.toml..."
-cat > wrangler.toml << EOF
-name = "uniwrtc"
-main = "src/index.js"
-compatibility_date = "2024-12-20"
+echo "🚀 Deploying to Cloudflare Pages project: ${PROJECT_NAME}"
 
-assets = { directory = "./dist", binding = "ASSETS" }
+# Create the project if it doesn't exist (ignore error if it already exists)
+npx wrangler pages project create "${PROJECT_NAME}" --production-branch main 2>/dev/null || true
 
-[[durable_objects.bindings]]
-name = "ROOMS"
-class_name = "Room"
-
-[[migrations]]
-tag = "v1"
-new_classes = ["Room"]
-
-[env.production]
-routes = [
-  { pattern = "${FULL_DOMAIN}/*", zone_name = "${DOMAIN}" }
-]
-
-assets = { directory = "./dist", binding = "ASSETS" }
-
-[[env.production.durable_objects.bindings]]
-name = "ROOMS"
-class_name = "Room"
-
-[build]
-command = "npm install"
-EOF
-
-echo "✅ wrangler.toml updated"
-echo ""
-
-# Deploy
-echo "🚀 Deploying to Cloudflare..."
-echo ""
-echo "Deploying to production..."
-wrangler deploy --env production
+# Deploy the built assets
+npx wrangler pages deploy dist --project-name "${PROJECT_NAME}"
 
 echo ""
 echo "✅ Deployment Complete!"
 echo ""
-echo "🎉 Your UniWRTC signaling server is live at:"
-echo "   https://${FULL_DOMAIN}/"
-echo ""
-echo "📊 Test it:"
-echo "   curl https://${FULL_DOMAIN}/health"
-echo ""
-echo "🧪 Local testing:"
-echo "   wrangler dev"
-echo ""
-echo "📊 View logs:"
-echo "   wrangler tail --env production"
-echo ""
-echo "🛠️  Next: Update demo.html to use:"
-echo "   const serverUrl = 'https://${FULL_DOMAIN}/';"
+echo "🎉 Your Pages site is deployed."
+echo "Next step for custom domain (manual in Cloudflare UI):"
+echo "  - Pages → ${PROJECT_NAME} → Custom domains → add signal.peer.ooo"
+echo "  - DNS: CNAME signal → ${PROJECT_NAME}.pages.dev"
 echo ""

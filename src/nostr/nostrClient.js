@@ -15,7 +15,7 @@ function isHex64(s) {
  * - Publishes kind:1 events tagged with ['t', room] and ['room', room]
  * - Subscribes to kind:1 events filtered by #t
  */
-export function createNostrClient({ relayUrl, room, onMessage, onPeer, onState } = {}) {
+export function createNostrClient({ relayUrl, room, onPayload, onState } = {}) {
   if (!relayUrl) throw new Error('relayUrl is required');
   if (!room) throw new Error('room is required');
 
@@ -80,6 +80,9 @@ export function createNostrClient({ relayUrl, room, onMessage, onPeer, onState }
       if (nostrEvent.id && state.seen.has(nostrEvent.id)) return;
       if (nostrEvent.id) state.seen.add(nostrEvent.id);
 
+      // Ignore our own events
+      if (nostrEvent.pubkey && nostrEvent.pubkey === state.pubkey) return;
+
       // Ensure it's for our room
       const tags = Array.isArray(nostrEvent.tags) ? nostrEvent.tags : [];
       const roomTag = tags.find((t) => Array.isArray(t) && t[0] === 'room');
@@ -93,22 +96,15 @@ export function createNostrClient({ relayUrl, room, onMessage, onPeer, onState }
         return;
       }
 
-      if (payload?.type === 'peer-join' && payload.peerId) {
-        try {
-          onPeer?.({ peerId: payload.peerId });
-        } catch {
-          // ignore
-        }
-        return;
-      }
-
-      if (payload?.type === 'message' && typeof payload.message === 'string') {
-        const from = (payload.peerId || nostrEvent.pubkey || 'peer').substring(0, 8) + '...';
-        try {
-          onMessage?.({ from, text: payload.message });
-        } catch {
-          // ignore
-        }
+      try {
+        onPayload?.({
+          from: nostrEvent.pubkey,
+          payload,
+          eventId: nostrEvent.id,
+          createdAt: nostrEvent.created_at,
+        });
+      } catch {
+        // ignore
       }
     }
   }
@@ -160,12 +156,12 @@ export function createNostrClient({ relayUrl, room, onMessage, onPeer, onState }
     sendRaw(['REQ', state.subId, filter]);
 
     // Announce presence
-    await sendJoin();
+    await send({ type: 'hello' });
 
     setState('connected');
   }
 
-  async function sendJoin() {
+  async function send(payload) {
     ensureKeys();
     const created_at = Math.floor(Date.now() / 1000);
     const tags = [
@@ -178,34 +174,8 @@ export function createNostrClient({ relayUrl, room, onMessage, onPeer, onState }
       created_at,
       tags,
       content: JSON.stringify({
-        type: 'peer-join',
-        peerId: state.pubkey,
-        room: state.room,
-        timestamp: Date.now(),
-      }),
-      pubkey: state.pubkey,
-    };
-
-    const signed = finalizeEvent(eventTemplate, state.secretKeyHex);
-    sendRaw(['EVENT', signed]);
-  }
-
-  async function sendMessage(text) {
-    ensureKeys();
-    const created_at = Math.floor(Date.now() / 1000);
-    const tags = [
-      ['room', state.room],
-      ['t', state.room],
-    ];
-
-    const eventTemplate = {
-      kind: 1,
-      created_at,
-      tags,
-      content: JSON.stringify({
-        type: 'message',
-        message: text,
-        peerId: state.pubkey,
+        ...payload,
+        from: state.pubkey,
         room: state.room,
         timestamp: Date.now(),
       }),
@@ -237,7 +207,7 @@ export function createNostrClient({ relayUrl, room, onMessage, onPeer, onState }
   return {
     connect,
     disconnect,
-    sendMessage,
+    send,
     getPublicKey: getPublicKeyHex,
   };
 }
