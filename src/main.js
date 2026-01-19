@@ -1,8 +1,12 @@
 import './style.css';
 import UniWRTCClient from '../client-browser.js';
+import { createNostrClient } from './nostr/nostrClient.js';
 
 // Make UniWRTCClient available globally for backwards compatibility
 window.UniWRTCClient = UniWRTCClient;
+
+// Nostr is the default transport (no toggle)
+let nostrClient = null;
 
 let client = null;
 const peerConnections = new Map();
@@ -20,8 +24,8 @@ document.getElementById('app').innerHTML = `
             <h2>Connection</h2>
             <div class="connection-controls">
                 <div>
-                    <label style="display: block; margin-bottom: 5px; color: #64748b; font-size: 13px;">Server URL</label>
-                    <input type="text" id="serverUrl" data-testid="serverUrl" placeholder="wss://signal.peer.ooo or ws://localhost:8080" value="wss://signal.peer.ooo">
+                    <label style="display: block; margin-bottom: 5px; color: #64748b; font-size: 13px;">Relay URL</label>
+                    <input type="text" id="relayUrl" placeholder="wss://relay.damus.io" value="wss://relay.damus.io" style="width: 100%; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px; font-family: monospace; font-size: 12px;">
                 </div>
                 <div>
                     <label style="display: block; margin-bottom: 5px; color: #64748b; font-size: 13px;">Room / Session ID</label>
@@ -147,6 +151,67 @@ function updatePeerList() {
 }
 
 window.connect = async function() {
+    await connectNostr();
+};
+
+async function connectNostr() {
+    const relayUrl = document.getElementById('relayUrl').value.trim();
+    const roomIdInput = document.getElementById('roomId');
+    const roomId = roomIdInput.value.trim();
+    
+    if (!relayUrl) {
+        log('Please enter a relay URL', 'error');
+        return;
+    }
+
+    const effectiveRoom = roomId || `room-${Math.random().toString(36).substring(2, 10)}`;
+    if (!roomId) roomIdInput.value = effectiveRoom;
+
+    try {
+        log(`Connecting to Nostr relay: ${relayUrl}...`, 'info');
+
+        if (nostrClient) {
+            await nostrClient.disconnect();
+            nostrClient = null;
+        }
+
+        nostrClient = createNostrClient({
+            relayUrl,
+            room: effectiveRoom,
+            onState: (state) => {
+                if (state === 'connected') updateStatus(true);
+                if (state === 'disconnected') updateStatus(false);
+            },
+            onMessage: ({ from, text }) => {
+                displayChatMessage(text, from, false);
+            },
+            onPeer: ({ peerId }) => {
+                // Use the existing peer list UI as a simple "seen peers" list
+                if (!peerConnections.has(peerId)) {
+                    peerConnections.set(peerId, null);
+                    updatePeerList();
+                    log(`Peer seen: ${peerId.substring(0, 6)}...`, 'success');
+                }
+            }
+        });
+
+        await nostrClient.connect();
+
+        const myPubkey = nostrClient.getPublicKey();
+        document.getElementById('clientId').textContent = myPubkey.substring(0, 16) + '...';
+        document.getElementById('sessionId').textContent = effectiveRoom;
+        log(`Joined Nostr room: ${effectiveRoom}`, 'success');
+        
+        updateStatus(true);
+
+        log('Nostr connection established', 'success');
+    } catch (error) {
+        log(`Nostr connection error: ${error.message}`, 'error');
+        updateStatus(false);
+    }
+}
+
+async function connectWebRTC() {
     const serverUrl = document.getElementById('serverUrl').value.trim();
     const roomId = document.getElementById('roomId').value.trim();
 
@@ -161,35 +226,35 @@ window.connect = async function() {
     }
 
     try {
-            log(`Connecting to ${serverUrl}...`, 'info');
+        log(`Connecting to ${serverUrl}...`, 'info');
         
         // For Cloudflare, use /ws endpoint with room ID query param
         let finalUrl = serverUrl;
         if (serverUrl.includes('signal.peer.ooo')) {
-                finalUrl = `${serverUrl.replace(/\/$/, '')}/ws?room=${roomId}`;
-                log(`Using Cloudflare Durable Objects with session: ${roomId}`, 'info');
+            finalUrl = `${serverUrl.replace(/\/$/, '')}/ws?room=${roomId}`;
+            log(`Using Cloudflare Durable Objects with session: ${roomId}`, 'info');
         }
         
         client = new UniWRTCClient(finalUrl, { autoReconnect: false });
         
         client.on('connected', (data) => {
-                log(`Connected with client ID: ${data.clientId}`, 'success');
+            log(`Connected with client ID: ${data.clientId}`, 'success');
             document.getElementById('clientId').textContent = data.clientId;
             updateStatus(true);
             
             // Auto-join the room
-                log(`Joining session: ${roomId}`, 'info');
+            log(`Joining session: ${roomId}`, 'info');
             client.joinSession(roomId);
         });
 
         client.on('joined', (data) => {
-                log(`Joined session: ${data.sessionId}`, 'success');
+            log(`Joined session: ${data.sessionId}`, 'success');
             document.getElementById('sessionId').textContent = data.sessionId;
             
             if (data.clients && data.clients.length > 0) {
-                    log(`Found ${data.clients.length} existing peers`, 'info');
+                log(`Found ${data.clients.length} existing peers`, 'info');
                 data.clients.forEach(peerId => {
-                        log(`Creating connection to existing peer: ${peerId.substring(0, 6)}...`, 'info');
+                    log(`Creating connection to existing peer: ${peerId.substring(0, 6)}...`, 'info');
                     createPeerConnection(peerId, true);
                 });
             }
@@ -198,11 +263,11 @@ window.connect = async function() {
         client.on('peer-joined', (data) => {
             // Only handle peers in our session
             if (client.sessionId && data.sessionId !== client.sessionId) {
-                    log(`Ignoring peer from different session: ${data.sessionId}`, 'warning');
+                log(`Ignoring peer from different session: ${data.sessionId}`, 'warning');
                 return;
             }
             
-                log(`Peer joined: ${data.peerId.substring(0, 6)}...`, 'success');
+            log(`Peer joined: ${data.peerId.substring(0, 6)}...`, 'success');
             
             // Wait a bit to ensure both peers are ready
             setTimeout(() => {
@@ -211,7 +276,7 @@ window.connect = async function() {
         });
 
         client.on('peer-left', (data) => {
-                log(`Peer left: ${data.peerId.substring(0, 6)}...`, 'warning');
+            log(`Peer left: ${data.peerId.substring(0, 6)}...`, 'warning');
             const pc = peerConnections.get(data.peerId);
             if (pc) {
                 pc.close();
@@ -222,17 +287,17 @@ window.connect = async function() {
         });
 
         client.on('offer', async (data) => {
-                log(`Received offer from ${data.peerId.substring(0, 6)}...`, 'info');
+            log(`Received offer from ${data.peerId.substring(0, 6)}...`, 'info');
             const pc = peerConnections.get(data.peerId) || await createPeerConnection(data.peerId, false);
             await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
             client.sendAnswer(answer, data.peerId);
-                log(`Sent answer to ${data.peerId.substring(0, 6)}...`, 'success');
+            log(`Sent answer to ${data.peerId.substring(0, 6)}...`, 'success');
         });
 
         client.on('answer', async (data) => {
-                log(`Received answer from ${data.peerId.substring(0, 6)}...`, 'info');
+            log(`Received answer from ${data.peerId.substring(0, 6)}...`, 'info');
             const pc = peerConnections.get(data.peerId);
             if (pc) {
                 await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
@@ -240,7 +305,7 @@ window.connect = async function() {
         });
 
         client.on('ice-candidate', async (data) => {
-                log(`Received ICE candidate from ${data.peerId.substring(0, 6)}...`, 'info');
+            log(`Received ICE candidate from ${data.peerId.substring(0, 6)}...`, 'info');
             const pc = peerConnections.get(data.peerId);
             if (pc && data.candidate) {
                 await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
@@ -257,17 +322,21 @@ window.connect = async function() {
         });
 
         client.on('error', (data) => {
-                log(`Error: ${data.message}`, 'error');
+            log(`Error: ${data.message}`, 'error');
         });
 
         await client.connect();
     } catch (error) {
-            log(`Connection error: ${error.message}`, 'error');
+        log(`Connection error: ${error.message}`, 'error');
         updateStatus(false);
     }
-};
+}
 
 window.disconnect = function() {
+    if (nostrClient) {
+        nostrClient.disconnect().catch(() => {});
+        nostrClient = null;
+    }
     if (client) {
         client.disconnect();
         client = null;
@@ -344,6 +413,15 @@ window.sendChatMessage = function() {
     const message = document.getElementById('chatMessage').value.trim();
     
     if (!message) {
+        return;
+    }
+
+    if (nostrClient) {
+        nostrClient.sendMessage(message).catch((e) => {
+            log(`Failed to send via Nostr: ${e?.message || e}`, 'error');
+        });
+        displayChatMessage(message, 'You', true);
+        document.getElementById('chatMessage').value = '';
         return;
     }
 
