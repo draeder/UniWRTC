@@ -15,7 +15,7 @@ function isHex64(s) {
  * - Publishes kind:1 events tagged with ['t', room] and ['room', room]
  * - Subscribes to kind:1 events filtered by #t
  */
-export function createNostrClient({ relayUrl, room, onPayload, onState } = {}) {
+export function createNostrClient({ relayUrl, room, onPayload, onState, onNotice, onOk } = {}) {
   if (!relayUrl) throw new Error('relayUrl is required');
   if (!room) throw new Error('room is required');
 
@@ -29,20 +29,27 @@ export function createNostrClient({ relayUrl, room, onPayload, onState } = {}) {
     seen: new Set(),
   };
 
+  // Track NIP-20 OK responses by event id
+  const okWaiters = new Map();
+
   function ensureKeys() {
     if (state.pubkey && state.secretKeyHex) return;
 
-    let stored = localStorage.getItem('nostr-secret-key');
+    // IMPORTANT: For this demo we want each browser tab to have a distinct peer ID.
+    // sessionStorage is per-tab, while localStorage is shared across tabs.
+    const storageKey = 'nostr-secret-key-tab';
+    let stored = sessionStorage.getItem(storageKey);
+
     // If stored value looks like an array string from prior buggy storage, clear it
     if (stored && stored.includes(',')) {
-      localStorage.removeItem('nostr-secret-key');
+      sessionStorage.removeItem(storageKey);
       stored = null;
     }
 
     if (!isHex64(stored)) {
       const secretBytes = generateSecretKey();
       state.secretKeyHex = bytesToHex(secretBytes);
-      localStorage.setItem('nostr-secret-key', state.secretKeyHex);
+      sessionStorage.setItem(storageKey, state.secretKeyHex);
     } else {
       state.secretKeyHex = stored;
     }
@@ -74,6 +81,34 @@ export function createNostrClient({ relayUrl, room, onPayload, onState } = {}) {
     if (!Array.isArray(msg) || msg.length < 2) return;
     const [type] = msg;
 
+    if (type === 'NOTICE') {
+      try {
+        onNotice?.(msg[1]);
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    // NIP-20: ["OK", <event_id>, <true|false>, <message>]
+    if (type === 'OK') {
+      const id = msg[1];
+      const ok = msg[2];
+      const message = msg[3];
+
+      const waiter = okWaiters.get(id);
+      if (waiter) {
+        okWaiters.delete(id);
+        waiter.resolve({ id, ok, message });
+      }
+      try {
+        onOk?.({ id, ok, message });
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
     if (type === 'EVENT') {
       const nostrEvent = msg[2];
       if (!nostrEvent || typeof nostrEvent !== 'object') return;
@@ -82,6 +117,7 @@ export function createNostrClient({ relayUrl, room, onPayload, onState } = {}) {
 
       // Ignore our own events
       if (nostrEvent.pubkey && nostrEvent.pubkey === state.pubkey) return;
+
 
       // Ensure it's for our room
       const tags = Array.isArray(nostrEvent.tags) ? nostrEvent.tags : [];
@@ -149,19 +185,24 @@ export function createNostrClient({ relayUrl, room, onPayload, onState } = {}) {
     const filter = {
       kinds: [1],
       '#t': [state.room],
-      since: now - 3600,
+      // Use a wider window to tolerate clock skew; app layer filters stale via session nonces.
+      since: now - 600,
       limit: 200,
     };
 
     sendRaw(['REQ', state.subId, filter]);
 
-    // Announce presence
-    await send({ type: 'hello' });
-
     setState('connected');
   }
 
   async function send(payload) {
+    ensureKeys();
+    const signed = buildSignedEvent(payload);
+    sendRaw(['EVENT', signed]);
+    return signed.id;
+  }
+
+  function buildSignedEvent(payload) {
     ensureKeys();
     const created_at = Math.floor(Date.now() / 1000);
     const tags = [
@@ -182,8 +223,28 @@ export function createNostrClient({ relayUrl, room, onPayload, onState } = {}) {
       pubkey: state.pubkey,
     };
 
-    const signed = finalizeEvent(eventTemplate, state.secretKeyHex);
+    return finalizeEvent(eventTemplate, state.secretKeyHex);
+  }
+
+  async function sendWithOk(payload, { timeoutMs = 4000 } = {}) {
+    const signed = buildSignedEvent(payload);
+
+    const okPromise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        okWaiters.delete(signed.id);
+        reject(new Error('Timed out waiting for relay OK'));
+      }, timeoutMs);
+
+      okWaiters.set(signed.id, {
+        resolve: (v) => {
+          clearTimeout(timer);
+          resolve(v);
+        },
+      });
+    });
+
     sendRaw(['EVENT', signed]);
+    return await okPromise;
   }
 
   async function disconnect() {
@@ -208,6 +269,7 @@ export function createNostrClient({ relayUrl, room, onPayload, onState } = {}) {
     connect,
     disconnect,
     send,
+    sendWithOk,
     getPublicKey: getPublicKeyHex,
   };
 }
