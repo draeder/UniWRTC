@@ -74,7 +74,7 @@ document.getElementById('app').innerHTML = `
             <div class="connection-controls">
                 <div>
                     <label style="display: block; margin-bottom: 5px; color: #64748b; font-size: 13px;">Relay URL(s)</label>
-                    <input type="text" id="relayUrl" placeholder="wss://relay.damus.io" value="${DEFAULT_RELAYS.join(', ')}" style="width: 100%; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px; font-family: monospace; font-size: 12px;">
+                    <input type="text" id="relayUrl" data-testid="relayUrl" placeholder="wss://relay.damus.io" value="${DEFAULT_RELAYS.join(', ')}" style="width: 100%; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px; font-family: monospace; font-size: 12px;">
                 </div>
                 <div>
                     <label style="display: block; margin-bottom: 5px; color: #64748b; font-size: 13px;">Room / Session ID</label>
@@ -155,12 +155,20 @@ roomInput.addEventListener('input', () => {
     document.getElementById('sessionId').textContent = roomInput.value.trim() || 'Not joined';
 });
 
-// STUN-only ICE servers (no TURN)
-const ICE_SERVERS = [
-    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
-    { urls: ['stun:stun2.l.google.com:19302', 'stun:stun3.l.google.com:19302'] },
-    { urls: ['stun:stun.cloudflare.com:3478'] },
-];
+// ICE servers: STUN-only by default (no TURN). For deterministic local testing,
+// support host-only ICE via URL flag: ?ice=host (or ?ice=none)
+const iceMode = (params.get('ice') || '').toLowerCase();
+const ICE_SERVERS = iceMode === 'host' || iceMode === 'none'
+    ? []
+    : [
+        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+        { urls: ['stun:stun2.l.google.com:19302', 'stun:stun3.l.google.com:19302'] },
+        { urls: ['stun:stun.cloudflare.com:3478'] },
+    ];
+
+if (ICE_SERVERS.length === 0) {
+    log('Using host-only ICE candidates (no STUN)', 'info');
+}
 
 function log(message, type = 'info') {
     const logContainer = document.getElementById('logContainer');
@@ -170,11 +178,11 @@ function log(message, type = 'info') {
         entry.textContent = `[${timestamp}] ${message}`;
     
     // Add testid for specific log messages
-    if (message.includes('Connected with client ID')) {
+    if (message.includes('Connected with client ID') || message.includes('Nostr connection established')) {
         entry.setAttribute('data-testid', 'log-connected');
-    } else if (message.includes('Joined session')) {
+    } else if (message.includes('Joined session') || message.includes('Joined Nostr room')) {
         entry.setAttribute('data-testid', 'log-joined');
-    } else if (message.includes('Peer joined')) {
+    } else if (message.includes('Peer joined') || message.includes('Peer seen')) {
         entry.setAttribute('data-testid', 'log-peer-joined');
     } else if (message.includes('Data channel open')) {
         entry.setAttribute('data-testid', 'log-data-channel');
@@ -199,8 +207,7 @@ function updateStatus(connected) {
         badge.className = 'status-badge status-disconnected';
         connectBtn.disabled = false;
         disconnectBtn.disabled = true;
-        document.getElementById('clientId').textContent = 'Not connected';
-        document.getElementById('sessionId').textContent = 'Not joined';
+        // Keep client/session labels stable; identity and room are local state.
     }
 }
 
@@ -366,6 +373,11 @@ async function connectNostr() {
     const relayUrlRaw = document.getElementById('relayUrl').value.trim();
     const roomIdInput = document.getElementById('roomId');
     const roomId = roomIdInput.value.trim();
+
+    if (!relayUrlRaw) {
+        log('Please enter a relay URL', 'error');
+        return;
+    }
     
     const relayCandidatesRaw = relayUrlRaw.toLowerCase() === 'auto'
         ? DEFAULT_RELAYS
@@ -379,11 +391,6 @@ async function connectNostr() {
         );
 
     const relayCandidates = relayCandidatesRaw.length ? relayCandidatesRaw : DEFAULT_RELAYS;
-
-    if (relayCandidates.length === 0) {
-        log('Please enter a relay URL', 'error');
-        return;
-    }
 
     const effectiveRoom = roomId || `room-${Math.random().toString(36).substring(2, 10)}`;
     if (!roomId) roomIdInput.value = effectiveRoom;
@@ -731,7 +738,7 @@ async function connectWebRTC() {
         let finalUrl = serverUrl;
         if (serverUrl.includes('signal.peer.ooo')) {
             finalUrl = `${serverUrl.replace(/\/$/, '')}/ws?room=${roomId}`;
-            log(`Using Cloudflare Durable Objects with session: ${roomId}`, 'info');
+            log(`Using hosted endpoint with session: ${roomId}`, 'info');
         }
         
         client = new UniWRTCClient(finalUrl, { autoReconnect: false });

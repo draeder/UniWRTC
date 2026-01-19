@@ -1,5 +1,5 @@
 /**
- * Durable Object for WebRTC signaling (HTTP polling only)
+ * Legacy room state for HTTP polling signaling (no WebSockets)
  */
 export class Room {
   constructor(state, env) {

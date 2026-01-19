@@ -1,8 +1,8 @@
 # UniWRTC Cloudflare Deployment Guide
 
-## Deploy Without Durable Objects (Cloudflare Pages)
+## Deploy (Cloudflare Pages)
 
-If you only want to host the demo UI (static assets) and do NOT want Durable Objects, deploy the Vite build to Cloudflare Pages.
+This repo’s current demo works client-side (Nostr), so you can deploy just the static site to Cloudflare Pages.
 
 ### Prerequisites
 
@@ -14,12 +14,12 @@ If you only want to host the demo UI (static assets) and do NOT want Durable Obj
 
 ```bash
 npm install
-npm run deploy:cf:no-do
+npm run deploy:cf:pages
 ```
 
 Notes:
 - This deploys the `dist/` folder (static hosting).
-- No server routes are deployed; Durable Objects are not used.
+- No server routes are deployed.
 
 ## Custom Domain (signal.peer.ooo)
 

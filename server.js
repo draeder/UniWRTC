@@ -10,7 +10,7 @@ const __dirname = path.dirname(__filename);
 
 const CLIENT_TTL_MS = 60_000;
 
-// Top-level rooms are keyed by ?room= (mirrors Cloudflare DO routing)
+// Top-level rooms are keyed by ?room=
 // Each room contains multiple sessions keyed by sessionId.
 const rooms = new Map();
 

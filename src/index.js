@@ -1,7 +1,6 @@
 /**
  * UniWRTC Cloudflare Worker
- * WebRTC Signaling Service using Durable Objects
- * Serves static assets and HTTP polling signaling
+ * Legacy HTTP polling signaling worker
  */
 
 import { Room } from './room.js';

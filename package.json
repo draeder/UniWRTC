@@ -1,6 +1,6 @@
 {
   "name": "uniwrtc",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "A universal WebRTC signaling service",
   "main": "server.js",
   "type": "module",
@@ -10,9 +10,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy:cf:pages": "npm run build && npx wrangler pages deploy dist",
-    "deploy:cf:no-do": "npm run deploy:cf:pages",
     "server": "node server.js",
-    "test": "node test.js"
+    "test": "playwright test"
   },
   "keywords": [
     "webrtc",

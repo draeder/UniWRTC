@@ -1,10 +1,10 @@
 @echo off
-REM UniWRTC Cloudflare Automated Setup Script (Windows, NO Durable Objects)
+REM UniWRTC Cloudflare Automated Setup Script (Windows)
 REM Deploys the static demo to Cloudflare Pages.
 
 setlocal enabledelayedexpansion
 
-echo 🚀 UniWRTC Cloudflare Setup (Pages / no Durable Objects)
+echo 🚀 UniWRTC Cloudflare Setup (Cloudflare Pages)
 echo ============================
 echo.
 

@@ -1,52 +1,87 @@
 # UniWRTC
 
-A universal WebRTC signaling service that provides a simple and flexible **HTTP polling** signaling server for WebRTC applications.
+A WebRTC demo + signaling utilities.
+
+The default demo flow uses **Nostr relays for WebRTC signaling** (offer/answer/ICE + presence) and a **WebRTC data channel for app data**.
+
+This repo also includes an optional **legacy HTTP polling signaling server** (useful for local development), but the live demo is now fully static/serverless.
 
 Available on npm: https://www.npmjs.com/package/uniwrtc
 
 ## Features
 
-- 🚀 **Simple signaling** - HTTP polling (works locally and on Cloudflare Durable Objects)
-- 🏠 **Session-based architecture** - Support for multiple sessions with isolated peer groups
-- 🔌 **Flexible client library** - Ready-to-use JavaScript client for browser and Node.js
-- 📡 **Real-time messaging** - Efficient message routing between peers
-- 🔄 **Auto-reconnection** - Built-in reconnection logic for reliable connections
-- 📊 **Health monitoring** - HTTP health check endpoint for monitoring
-- 🎯 **Minimal dependencies** - Lightweight implementation with minimal runtime deps
+- 🤝 **Nostr signaling (demo default)** - WebRTC offer/answer/ICE + presence over Nostr relays
+- 📦 **WebRTC for data** - App/chat data rides the data channel (not the relay)
+- 🏠 **Session-based rooms** - Multiple sessions with isolated peer groups
+- 🔌 **Optional legacy server** - HTTP polling signaling server (local/dev)
+- 🧊 **STUN-only** - No TURN in the default demo
 
 ## Quick Start
 
-## Using with `simple-peer` (SDP text-only)
+## Using with `simple-peer` (Nostr signaling)
 
-This repo's signaling format sends **SDP as plain text** for offers/answers.
-`simple-peer` uses `{ type, sdp }` objects, so use the adapter in [simple-peer-adapter.js](simple-peer-adapter.js).
+The repo’s default demo uses Nostr relays for signaling. Here’s a minimal `simple-peer` example that uses the built-in Nostr client for signaling messages.
 
-Example (browser):
+Example (browser, two tabs):
 
 ```js
 import Peer from 'simple-peer';
-import UniWRTCClient from './client-browser.js';
-import { sendSimplePeerSignal, attachUniWRTCToSimplePeer, chooseDeterministicInitiator } from './simple-peer-adapter.js';
+import { createNostrClient } from './src/nostr/nostrClient.js';
 
-const client = new UniWRTCClient('https://your-signal-server', { roomId: 'my-room' });
-await client.connect();
+const relayUrl = 'wss://relay.damus.io';
+const room = 'my-room';
 
-// Join a session (peers in the same session can connect)
-await client.joinSession('my-room');
+const nostr = createNostrClient({
+  relayUrl,
+  room,
+  onPayload: ({ from, payload }) => {
+    // Only accept signals intended for us
+    if (payload?.type !== 'sp-signal') return;
+    if (payload?.to !== myId) return;
+    if (targetId && from !== targetId) return;
 
-// Ensure exactly ONE side initiates for a given pair
-const initiator = chooseDeterministicInitiator(client.clientId, targetId);
-const peer = new Peer({ initiator, trickle: true });
-const cleanup = attachUniWRTCToSimplePeer(client, peer);
-
-peer.on('signal', (signal) => {
-  // targetId must be the other peer's UniWRTC client id
-  sendSimplePeerSignal(client, signal, targetId);
+    try {
+      peer.signal(payload.signal);
+    } catch (e) {
+      console.warn('Failed to apply signal:', e);
+    }
+  },
 });
 
-// When done:
-// cleanup();
+await nostr.connect();
+
+const myId = nostr.getPublicKey();
+console.log('My Peer ID:', myId);
+
+// Set this in each tab (copy/paste from the other tab)
+const targetId = prompt('Paste the other Peer ID:')?.trim();
+if (!targetId) throw new Error('Missing targetId');
+
+// Deterministic initiator prevents offer collisions
+const initiator = myId.localeCompare(targetId) < 0;
+
+const peer = new Peer({ initiator, trickle: true });
+
+peer.on('signal', async (signal) => {
+  // Send signaling via Nostr; WebRTC data stays P2P.
+  await nostr.send({
+    type: 'sp-signal',
+    to: targetId,
+    signal,
+  });
+});
+
+peer.on('connect', () => {
+  console.log('WebRTC connected');
+  peer.send('hello over datachannel');
+});
+
+peer.on('data', (data) => {
+  console.log('Got data:', data.toString());
+});
 ```
+
+Note: Nostr relays are generally public. Don’t send secrets in signaling payloads.
 
 ### Installation
 
@@ -85,7 +120,11 @@ PORT=8080
 
 ### Try the Demo
 
-The interactive demo is available live at **https://signal.peer.ooo/** (Cloudflare Workers deployment) or run locally:
+The interactive demo is available live at **https://signal.peer.ooo/** (Cloudflare Pages static site) or run locally.
+
+The demo uses:
+- Nostr relays for signaling
+- WebRTC data channels for data/chat
 
 **Using the deployed demo (recommended):**
 1. Open https://signal.peer.ooo/ in two browser tabs
@@ -95,15 +134,15 @@ The interactive demo is available live at **https://signal.peer.ooo/** (Cloudfla
 5. Open the P2P chat and send messages between tabs
 
 **Or run locally:**
-1. Start the server: `npm start` (signaling at `http://localhost:8080`)
-2. Start the Vite dev server: `npm run dev` (demo at `http://localhost:5173/`)
+1. Install deps: `npm install`
+2. Start Vite: `npm run dev` (demo at `http://localhost:5173/`)
 3. Open the demo in two browser tabs
 4. Enter the same session ID in both, then Connect
 5. Chat P2P once data channels open
 
 ## Usage
 
-### Server API
+### Legacy HTTP Signaling Server API (optional)
 
 The signaling server supports:
 - HTTP polling signaling (no WebSockets)
@@ -342,10 +381,8 @@ client.on('ice-candidate', async (data) => {
 await client.connect();
 client.joinSession('my-video-session');
 
-// Or use Cloudflare Durable Objects deployment (HTTP polling; no WebSockets)
-const cfClient = new UniWRTCClient('https://signal.peer.ooo');
-await cfClient.connect();
-cfClient.joinSession('my-session');
+// Note: https://signal.peer.ooo is the static demo site (Nostr signaling),
+// not an HTTP polling signaling server endpoint.
 ```
 
 ## API Reference
@@ -407,25 +444,33 @@ Response:
 
 ## Architecture
 
+### Nostr Signaling (Demo Default)
+
+- Peers publish signaling messages (offer/answer/ICE/presence) to a Nostr relay.
+- Messages are scoped to a room/session and targeted to a specific peer session.
+- Once the WebRTC data channel opens, application data/chat is sent P2P.
+- This is designed to work without running your own signaling server.
+
 ### Session-based Peer Isolation
 
 - **Sessions**: Each session is identified by a unique string ID (also called "room" in the UI)
 - **Peer routing**: Each peer gets a unique client ID; signaling messages are routed only to intended targets
 - **Session isolation**: Peers in different sessions cannot see or communicate with each other
-- **Cloudflare Durable Objects**: Uses DO state to isolate sessions; routing by `?room=` query param per session
 - Clients join with `joinSession(sessionId)` and receive notifications when other peers join the same session
 
 ### Message Flow
 
-1. Client connects via HTTPS (Cloudflare DO HTTP polling)
-2. Server/Durable Object assigns a unique client ID
+This section applies to the legacy HTTP polling server:
+
+1. Client connects via HTTP(S)
+2. Server assigns a unique client ID
 3. Client sends join message with session ID
 4. Server broadcasts `peer-joined` to other peers in the same session only
 5. Peers exchange WebRTC offers/answers/ICE candidates via the server
 6. Server routes signaling messages to specific peers by target ID (unicast, not broadcast)
 
 Notes:
-- Cloudflare signaling uses JSON over HTTPS requests to `/api` (polling).
+- Server signaling uses JSON over HTTPS requests to `/api` (polling).
 - Offers/answers are transmitted as SDP strings (text-only) in the `offer`/`answer` fields.
 - ICE candidates are transmitted as a compact text string: `candidate|sdpMid|sdpMLineIndex`.
 

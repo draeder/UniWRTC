@@ -111,7 +111,7 @@ class UniWRTCClient {
 
   joinSession(sessionId) {
     this.sessionId = sessionId;
-    // Durable Objects handle session joining automatically via room parameter
+    // Session is provided via the room query param on connection
   }
 
   leaveSession() {
@@ -153,8 +153,7 @@ class UniWRTCClient {
   }
 
   listRooms() {
-    // Durable Objects don't expose room listing
-    console.log('Room listing not available with Durable Objects');
+    console.log('Room listing is not available for this transport');
   }
 
   on(event, handler) {

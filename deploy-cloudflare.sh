@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# UniWRTC Cloudflare Automated Setup Script (NO Durable Objects)
+# UniWRTC Cloudflare Automated Setup Script
 # Deploys the static demo to Cloudflare Pages.
 
 set -e
 
-echo "🚀 UniWRTC Cloudflare Setup (Pages / no Durable Objects)"
+echo "🚀 UniWRTC Cloudflare Setup (Cloudflare Pages)"
 echo "============================"
 echo ""
 

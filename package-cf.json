@@ -1,7 +1,7 @@
 {
   "name": "uniwrtc-cloudflare",
   "version": "1.0.0",
-  "description": "UniWRTC Cloudflare Workers deployment",
+  "description": "UniWRTC Cloudflare deployment (legacy worker config)",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",

@@ -1,38 +1,30 @@
 import { test, expect } from '@playwright/test';
 
-function failOnWebSocket(page) {
-  page.on('websocket', (ws) => {
-    throw new Error(`WebSockets are disabled, but a WebSocket was opened: ${ws.url()}`);
-  });
-}
-
 test.describe('UniWRTC Demo - Full Integration Tests', () => {
-  const BASE_URL = 'https://signal.peer.ooo';
   const ROOM_ID = 'test';
   
   test.describe('Connection and Session Management', () => {
     test('should load demo page and display UI', async ({ page }) => {
-      failOnWebSocket(page);
-      await page.goto(BASE_URL);
+      await page.goto('/');
       
       // Check main elements exist
       await expect(page.locator('h1')).toContainText('UniWRTC Demo');
       await expect(page.locator('text=Connection')).toBeVisible();
-      await expect(page.getByTestId('serverUrl')).toHaveValue('https://signal.peer.ooo');
+      await expect(page.getByTestId('relayUrl')).toBeVisible();
       await expect(page.getByTestId('roomId')).toHaveValue('demo-room');
       await expect(page.getByTestId('connectBtn')).toBeVisible();
     });
 
-    test('should connect to signaling server and join session', async ({ page }) => {
-      failOnWebSocket(page);
-      await page.goto(BASE_URL);
+    test('should connect to relay and join room', async ({ page }) => {
+      test.setTimeout(60_000);
+      await page.goto('/');
       
       // Click connect
       await page.getByTestId('connectBtn').click();
       
       // Wait for connection success log
-      await expect(page.getByTestId('log-connected')).toBeVisible({ timeout: 20000 });
-      await expect(page.getByTestId('log-joined')).toBeVisible({ timeout: 20000 });
+      await expect(page.getByTestId('log-connected')).toBeVisible({ timeout: 30000 });
+      await expect(page.getByTestId('log-joined')).toBeVisible({ timeout: 30000 });
       
       // Check status changed to connected
       const badge = page.getByTestId('statusBadge');
@@ -46,12 +38,12 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
     });
 
     test('should handle disconnect', async ({ page }) => {
-      failOnWebSocket(page);
-      await page.goto(BASE_URL);
+      test.setTimeout(60_000);
+      await page.goto('/');
       
       // Connect first
       await page.getByTestId('connectBtn').click();
-      await expect(page.getByTestId('log-connected')).toBeVisible({ timeout: 20000 });
+      await expect(page.getByTestId('log-connected')).toBeVisible({ timeout: 30000 });
       
       // Now disconnect
       await page.getByTestId('disconnectBtn').click();
@@ -59,7 +51,6 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
       // Check status changed back to disconnected
       const badge = page.getByTestId('statusBadge');
       await expect(badge).toContainText('Disconnected');
-      await expect(page.getByTestId('clientId')).toContainText('Not connected');
     });
   });
 
@@ -68,21 +59,18 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
       // Open three browser contexts (simulating three users)
       const context1 = await browser.newContext();
       const page1 = await context1.newPage();
-      failOnWebSocket(page1);
       
       const context2 = await browser.newContext();
       const page2 = await context2.newPage();
-      failOnWebSocket(page2);
       
       const context3 = await browser.newContext();
       const page3 = await context3.newPage();
-      failOnWebSocket(page3);
       
       try {
         // Connect all three peers to same room
-        await page1.goto(BASE_URL);
-        await page2.goto(BASE_URL);
-        await page3.goto(BASE_URL);
+        await page1.goto('/?ice=host');
+        await page2.goto('/?ice=host');
+        await page3.goto('/?ice=host');
         
         // Use shared room ID for all three peers
         await page1.getByTestId('roomId').fill(ROOM_ID);
@@ -127,21 +115,18 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
       test.setTimeout(90_000);
       const context1 = await browser.newContext();
       const page1 = await context1.newPage();
-      failOnWebSocket(page1);
       
       const context2 = await browser.newContext();
       const page2 = await context2.newPage();
-      failOnWebSocket(page2);
       
       const context3 = await browser.newContext();
       const page3 = await context3.newPage();
-      failOnWebSocket(page3);
       
       try {
         // Connect all three peers
-        await page1.goto(BASE_URL);
-        await page2.goto(BASE_URL);
-        await page3.goto(BASE_URL);
+        await page1.goto('/?ice=host');
+        await page2.goto('/?ice=host');
+        await page3.goto('/?ice=host');
         
         await page1.getByTestId('roomId').fill(ROOM_ID);
         await page2.getByTestId('roomId').fill(ROOM_ID);
@@ -172,9 +157,9 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
         }
         
         // Wait for data channels to open - wait for at least one data channel log on each peer with extended timeout
-        await expect(page1.getByTestId('log-data-channel').first()).toBeVisible({ timeout: 40000 });
-        await expect(page2.getByTestId('log-data-channel').first()).toBeVisible({ timeout: 40000 });
-        await expect(page3.getByTestId('log-data-channel').first()).toBeVisible({ timeout: 40000 });
+        await expect(page1.getByTestId('log-data-channel').first()).toBeVisible({ timeout: 60000 });
+        await expect(page2.getByTestId('log-data-channel').first()).toBeVisible({ timeout: 60000 });
+        await expect(page3.getByTestId('log-data-channel').first()).toBeVisible({ timeout: 60000 });
         
         // Wait longer to ensure all data channels are fully established
         await page1.waitForTimeout(3000);
@@ -199,21 +184,18 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
       test.setTimeout(90_000);
       const context1 = await browser.newContext();
       const page1 = await context1.newPage();
-      failOnWebSocket(page1);
       
       const context2 = await browser.newContext();
       const page2 = await context2.newPage();
-      failOnWebSocket(page2);
       
       const context3 = await browser.newContext();
       const page3 = await context3.newPage();
-      failOnWebSocket(page3);
       
       try {
         // Connect all three peers
-        await page1.goto(BASE_URL);
-        await page2.goto(BASE_URL);
-        await page3.goto(BASE_URL);
+        await page1.goto('/?ice=host');
+        await page2.goto('/?ice=host');
+        await page3.goto('/?ice=host');
         
         await page1.getByTestId('roomId').fill(ROOM_ID);
         await page2.getByTestId('roomId').fill(ROOM_ID);
@@ -229,9 +211,9 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
         await expect(page3.getByTestId('log-connected')).toBeVisible({ timeout: 10000 });
         
         // Wait for data channels to open on all peers first with extended timeout
-        await expect(page1.getByTestId('log-data-channel').first()).toBeVisible({ timeout: 25000 });
-        await expect(page2.getByTestId('log-data-channel').first()).toBeVisible({ timeout: 25000 });
-        await expect(page3.getByTestId('log-data-channel').first()).toBeVisible({ timeout: 25000 });
+        await expect(page1.getByTestId('log-data-channel').first()).toBeVisible({ timeout: 60000 });
+        await expect(page2.getByTestId('log-data-channel').first()).toBeVisible({ timeout: 60000 });
+        await expect(page3.getByTestId('log-data-channel').first()).toBeVisible({ timeout: 60000 });
 
         // Give the browser a moment to fully wire up data channel handlers.
         await page1.waitForTimeout(3000);
@@ -287,16 +269,14 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
     test('should not connect peers from different sessions', async ({ browser }) => {
       const context1 = await browser.newContext();
       const page1 = await context1.newPage();
-      failOnWebSocket(page1);
       
       const context2 = await browser.newContext();
       const page2 = await context2.newPage();
-      failOnWebSocket(page2);
       
       try {
         // Connect to different rooms
-        await page1.goto(BASE_URL);
-        await page2.goto(BASE_URL);
+        await page1.goto('/');
+        await page2.goto('/');
         
         // Use different unique room IDs to ensure isolation
         const roomA = `iso-a-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -328,24 +308,21 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
   });
 
   test.describe('Error Handling', () => {
-    test('should show error when server URL is empty', async ({ page }) => {
-      failOnWebSocket(page);
-      await page.goto(BASE_URL);
-      
-      await page.getByTestId('serverUrl').fill('');
+    test('should show error when relay URL is empty', async ({ page }) => {
+      await page.goto('/');
+      await page.getByTestId('relayUrl').fill('');
       await page.getByTestId('connectBtn').click();
-      
-      await expect(page.locator('text=Please enter a server URL')).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('text=Please enter a relay URL')).toBeVisible({ timeout: 5000 });
     });
 
-    test('should show error when room ID is empty', async ({ page }) => {
-      failOnWebSocket(page);
-      await page.goto(BASE_URL);
-      
+    test('should auto-fill a room when room ID is empty', async ({ page }) => {
+      test.setTimeout(60_000);
+      await page.goto('/');
       await page.getByTestId('roomId').fill('');
       await page.getByTestId('connectBtn').click();
-      
-      await expect(page.locator('text=Please enter a room ID')).toBeVisible({ timeout: 5000 });
+      await expect(page.getByTestId('log-connected')).toBeVisible({ timeout: 30000 });
+      await expect(page.getByTestId('roomId')).not.toHaveValue('');
+      await expect(page.getByTestId('sessionId')).not.toContainText('Not joined');
     });
   });
 });
