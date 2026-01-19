@@ -20,7 +20,9 @@
   ],
   "author": "",
   "license": "MIT",
-  "dependencies": {},
+  "dependencies": {
+    "nostr-tools": "^2.9.0"
+  },
   "devDependencies": {
     "@playwright/test": "^1.57.0",
     "vite": "^6.0.6"
