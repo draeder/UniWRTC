@@ -171,6 +171,25 @@ if (ICE_SERVERS.length === 0) {
 }
 
 function log(message, type = 'info') {
+    // Reduce noise in the Activity Log by default.
+    // Use ?debug=1 to see everything.
+    const debugMode = (params.get('debug') || '').toLowerCase();
+    const noisy =
+        message.startsWith('Dropped ') ||
+        message.startsWith('ICE state (') ||
+        message.startsWith('Conn state (') ||
+        message.startsWith('Relay NOTICE') ||
+        message.includes('Failed to add ICE candidate') ||
+        message.includes('Failed to add queued ICE candidate') ||
+        message.includes('Failed to send ICE batch') ||
+        message.startsWith('Disconnected');
+
+    if (noisy && debugMode !== '1' && debugMode !== 'true') {
+        // Keep available for debugging without spamming the UI.
+        console.debug(message);
+        return;
+    }
+
     const logContainer = document.getElementById('logContainer');
     const entry = document.createElement('div');
         entry.className = `log-entry ${type}`;
@@ -213,16 +232,37 @@ function updateStatus(connected) {
 
 function updatePeerList() {
     const peerList = document.getElementById('peerList');
-    if (peerConnections.size === 0) {
+    if (!peerList) return;
+
+    const connectedPeerIds = [];
+    for (const [peerId, pc] of peerConnections.entries()) {
+        if (!(pc instanceof RTCPeerConnection)) continue;
+
+        // Prefer data channel state when available.
+        const dc = dataChannels.get(peerId);
+        const hasOpenDataChannel = dc && dc.readyState === 'open';
+
+        const connState = pc.connectionState;
+        const isActive = connState === 'connected' || connState === 'connecting' || hasOpenDataChannel;
+
+        // Explicitly hide failed/disconnected/closed peers.
+        if (!isActive) continue;
+        if (connState === 'failed' || connState === 'disconnected' || connState === 'closed') continue;
+
+        connectedPeerIds.push(peerId);
+    }
+
+    if (connectedPeerIds.length === 0) {
         peerList.innerHTML = '<p style="color: #94a3b8;">No peers connected</p>';
-    } else {
-        peerList.innerHTML = '';
-        peerConnections.forEach((pc, peerId) => {
-            const peerItem = document.createElement('div');
-            peerItem.className = 'peer-item';
-            peerItem.textContent = peerId.substring(0, 8) + '...';
-            peerList.appendChild(peerItem);
-        });
+        return;
+    }
+
+    peerList.innerHTML = '';
+    for (const peerId of connectedPeerIds) {
+        const peerItem = document.createElement('div');
+        peerItem.className = 'peer-item';
+        peerItem.textContent = peerId.substring(0, 8) + '...';
+        peerList.appendChild(peerItem);
     }
 }
 
@@ -927,10 +967,12 @@ async function createPeerConnection(peerId, shouldInitiate) {
 
     pc.oniceconnectionstatechange = () => {
         log(`ICE state (${peerId.substring(0, 6)}...): ${pc.iceConnectionState}`, 'info');
+        updatePeerList();
     };
 
     pc.onconnectionstatechange = () => {
         log(`Conn state (${peerId.substring(0, 6)}...): ${pc.connectionState}`, 'info');
+        updatePeerList();
     };
 
     pc.ondatachannel = (event) => {

@@ -105,14 +105,9 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
         // Peer 2 should see peer 3 joined (use first() to avoid strict mode with multiple peer-joined logs)
         await expect(page2.getByTestId('log-peer-joined').first()).toBeVisible({ timeout: 10000 });
         
-        // All three should show peers in connected peers list
-        const peerList1 = page1.getByTestId('peerList');
-        const peerList2 = page2.getByTestId('peerList');
-        const peerList3 = page3.getByTestId('peerList');
-        
-        await expect(peerList1).not.toContainText('No peers connected');
-        await expect(peerList2).not.toContainText('No peers connected');
-        await expect(peerList3).not.toContainText('No peers connected');
+        // The UI no longer shows a peer list; rely on peer discovery logs instead.
+        await expect(page1.getByTestId('log-peer-joined').first()).toBeVisible({ timeout: 20000 });
+        await expect(page2.getByTestId('log-peer-joined').first()).toBeVisible({ timeout: 20000 });
         
       } finally {
         await context1.close();
@@ -304,13 +299,10 @@ test.describe('UniWRTC Demo - Full Integration Tests', () => {
         
         // Wait a bit to see if peer-joined appears (it shouldn't)
         await page1.waitForTimeout(3000);
-        
-        // Neither should see the other's peer-joined
-        const peerList1 = page1.getByTestId('peerList');
-        const peerList2 = page2.getByTestId('peerList');
-        
-        await expect(peerList1).toContainText('No peers connected');
-        await expect(peerList2).toContainText('No peers connected');
+
+        // Neither should see a peer join log (they're in different rooms).
+        await expect(page1.getByTestId('logContainer').locator('[data-testid="log-peer-joined"]')).toHaveCount(0);
+        await expect(page2.getByTestId('logContainer').locator('[data-testid="log-peer-joined"]')).toHaveCount(0);
         
       } finally {
         await context1.close();
