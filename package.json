@@ -1,9 +1,14 @@
 {
   "name": "uniwrtc",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "A universal WebRTC signaling service",
   "main": "server.js",
   "type": "module",
+  "exports": {
+    ".": "./server.js",
+    "./nostr": "./src/nostr/nostrClient.js",
+    "./*": "./*"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "vite",

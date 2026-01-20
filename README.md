@@ -22,11 +22,13 @@ Available on npm: https://www.npmjs.com/package/uniwrtc
 
 The repo’s default demo uses Nostr relays for signaling. Here’s a minimal `simple-peer` example that uses the built-in Nostr client for signaling messages.
 
+`createNostrClient` is available from the published package as `uniwrtc/nostr`.
+
 Example (browser, two tabs):
 
 ```js
 import Peer from 'simple-peer';
-import { createNostrClient } from './src/nostr/nostrClient.js';
+import { createNostrClient } from 'uniwrtc/nostr';
 
 const relayUrl = 'wss://relay.damus.io';
 const room = 'my-room';
@@ -139,6 +141,17 @@ The demo uses:
 3. Open the demo in two browser tabs
 4. Enter the same session ID in both, then Connect
 5. Chat P2P once data channels open
+
+### Nostr Relay “Check” (Demo)
+
+When you click **Connect**, the demo doesn’t just pick the first relay that opens a WebSocket.
+
+It tries relay URLs (in small parallel batches) and selects the first relay that:
+
+1. Connects successfully over WebSocket, and
+2. Accepts a published signed event and replies with a NIP-20 `OK` response.
+
+This publish check uses a short timeout (currently ~3.5s) so the UI doesn’t hang on relays that connect but won’t accept publishes.
 
 ## Usage
 

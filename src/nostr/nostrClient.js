@@ -15,7 +15,7 @@ function isHex64(s) {
  * - Publishes kind:1 events tagged with ['t', room] and ['room', room]
  * - Subscribes to kind:1 events filtered by #t
  */
-export function createNostrClient({ relayUrl, room, onPayload, onState, onNotice, onOk } = {}) {
+export function createNostrClient({ relayUrl, room, onPayload, onState, onNotice, onOk, storage, secretKeyHex } = {}) {
   if (!relayUrl) throw new Error('relayUrl is required');
   if (!room) throw new Error('room is required');
 
@@ -32,24 +32,43 @@ export function createNostrClient({ relayUrl, room, onPayload, onState, onNotice
   // Track NIP-20 OK responses by event id
   const okWaiters = new Map();
 
+  const storageKey = 'nostr-secret-key-tab';
+  const fallbackStorage = (() => {
+    const mem = new Map();
+    return {
+      getItem: (k) => (mem.has(k) ? String(mem.get(k)) : null),
+      setItem: (k, v) => mem.set(k, String(v)),
+      removeItem: (k) => mem.delete(k),
+    };
+  })();
+
+  const effectiveStorage = storage
+    || (typeof sessionStorage !== 'undefined' ? sessionStorage : null)
+    || fallbackStorage;
+
   function ensureKeys() {
     if (state.pubkey && state.secretKeyHex) return;
 
+    if (isHex64(secretKeyHex)) {
+      state.secretKeyHex = secretKeyHex;
+      state.pubkey = getPublicKey(state.secretKeyHex);
+      return;
+    }
+
     // IMPORTANT: For this demo we want each browser tab to have a distinct peer ID.
     // sessionStorage is per-tab, while localStorage is shared across tabs.
-    const storageKey = 'nostr-secret-key-tab';
-    let stored = sessionStorage.getItem(storageKey);
+    let stored = effectiveStorage.getItem(storageKey);
 
     // If stored value looks like an array string from prior buggy storage, clear it
     if (stored && stored.includes(',')) {
-      sessionStorage.removeItem(storageKey);
+      effectiveStorage.removeItem(storageKey);
       stored = null;
     }
 
     if (!isHex64(stored)) {
       const secretBytes = generateSecretKey();
       state.secretKeyHex = bytesToHex(secretBytes);
-      sessionStorage.setItem(storageKey, state.secretKeyHex);
+      effectiveStorage.setItem(storageKey, state.secretKeyHex);
     } else {
       state.secretKeyHex = stored;
     }
@@ -156,6 +175,10 @@ export function createNostrClient({ relayUrl, room, onPayload, onState, onNotice
     ensureKeys();
 
     setState('connecting');
+
+    if (typeof WebSocket === 'undefined') {
+      throw new Error('WebSocket is not available in this environment. This Nostr helper is browser-first; in Node you must provide a WebSocket global (e.g., via a polyfill).');
+    }
 
     const ws = new WebSocket(state.relayUrl);
     state.ws = ws;
