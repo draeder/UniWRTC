@@ -490,9 +490,11 @@ async function connectNostr() {
             nostrClient = null;
         }
 
-        // Reset local peer state to avoid stale sessions targeting the wrong browser tab.
+        // Preserve session across relay reconnects to avoid breaking existing signaling.
+        // Only reset on true disconnect (Disconnect button), not on relay failures.
         myPeerId = myPeerId || ensureIdentity();
-        mySessionNonce = null;
+        // NOTE: Do NOT reset mySessionNonce here. Keep it stable across relay changes.
+        // If no session exists yet, it will be created below.
         peerSessions.clear();
         peerProbeState.clear();
         readyPeers.clear();
@@ -528,7 +530,10 @@ async function connectNostr() {
         // Any client instance will derive the same per-tab keypair.
         const myPubkey = myPeerId || ensureIdentity();
         myPeerId = myPubkey;
-        mySessionNonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        // Generate session nonce only once per connect session (preserve across relay changes)
+        if (!mySessionNonce) {
+            mySessionNonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        }
         document.getElementById('clientId').textContent = myPubkey.substring(0, 16) + '...';
         document.getElementById('sessionId').textContent = effectiveRoom;
 
