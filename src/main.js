@@ -1,6 +1,7 @@
 import './style.css';
 import UniWRTCClient from '../client-browser.js';
 import { createNostrClient } from './nostr/nostrClient.js';
+import { PeerCoordinator } from './coordinator.js';
 import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 
 // Make UniWRTCClient available globally for backwards compatibility
@@ -8,6 +9,7 @@ window.UniWRTCClient = UniWRTCClient;
 
 // Nostr is the default transport (no toggle)
 let nostrClient = null;
+let coordinator = null;
 let myPeerId = null;
 let mySessionNonce = null;
 const peerSessions = new Map();
@@ -133,6 +135,8 @@ document.getElementById('app').innerHTML = `
 const roomInput = document.getElementById('roomId');
 const params = new URLSearchParams(window.location.search);
 const urlRoom = params.get('room') || params.get('session');
+const coordinatorEnabled = ((params.get('coord') || params.get('coordinator') || '').toLowerCase());
+const COORD_ON = coordinatorEnabled === '1' || coordinatorEnabled === 'true' || coordinatorEnabled === 'yes';
 if (urlRoom) {
     roomInput.value = urlRoom;
     log(`Prefilled room ID from URL: ${urlRoom}`, 'info');
@@ -304,16 +308,16 @@ function isPoliteFor(peerId) {
 
 function sendSignal(to, payload) {
     if (!nostrClient) throw new Error('Not connected to Nostr');
-
-    const toSession = peerSessions.get(to);
     const type = payload?.type;
-    const needsToSession = type !== 'probe';
+    const isBroadcast = !to;
+    const toSession = isBroadcast ? null : peerSessions.get(to);
+    const needsToSession = !isBroadcast && type !== 'probe';
 
     if (needsToSession && !toSession) throw new Error('No peer session yet');
 
     return nostrClient.send({
         ...payload,
-        to,
+        ...(to ? { to } : {}),
         ...(needsToSession ? { toSession } : {}),
         fromSession: mySessionNonce,
     });
@@ -545,6 +549,12 @@ async function connectNostr() {
             onPayload: async ({ from, payload }) => {
                 const peerId = from;
                 if (!peerId || peerId === myPeerId) return;
+
+                // Coordinator: track peers and handle control-plane messages
+                coordinator?.registerPeer(peerId);
+                if (payload && (payload.type === 'coordinator-candidate' || payload.type === 'coordinator-heartbeat')) {
+                    coordinator?.handleCoordinatorMessage(payload);
+                }
 
                 // Use the existing peer list UI as a simple "seen peers" list
                 if (!peerConnections.has(peerId)) {
@@ -786,6 +796,21 @@ async function connectNostr() {
         }
 
         nostrClient = selected.client;
+        if (COORD_ON) {
+            coordinator = new PeerCoordinator({
+                myPeerId,
+                room: effectiveRoom,
+                sendSignal,
+                nostrClient,
+            });
+            coordinator.onCoordinatorChanged = ({ isNowCoordinator }) => {
+                updateRole(isNowCoordinator ? 'coordinator' : 'peer');
+            };
+            await coordinator.initialize();
+            coordinator.triggerCoordinatorElection();
+            const status = coordinator.getStatus();
+            updateRole(status.isCoordinator ? 'coordinator' : 'peer');
+        }
         document.getElementById('relayUrl').value = selected.relayUrl;
         log(`Selected relay: ${selected.relayUrl}`, 'success');
 
@@ -930,6 +955,10 @@ async function connectWebRTC() {
 
 window.disconnect = function() {
     updateRole(null);
+    if (coordinator) {
+        coordinator.destroy();
+        coordinator = null;
+    }
     if (nostrClient) {
         nostrClient.disconnect().catch(() => {});
         nostrClient = null;
