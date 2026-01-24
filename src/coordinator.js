@@ -194,7 +194,7 @@ export class PeerCoordinator {
   }
 
   /**
-   * Register a new peer and potentially trigger election
+   * Register a new peer (do NOT trigger election - coordinator is sticky)
    */
   registerPeer(peerId) {
     if (!this.knownPeers.has(peerId)) {
@@ -204,7 +204,12 @@ export class PeerCoordinator {
         lastSeen: Date.now(),
       });
       console.log(`[Coordinator] Registered peer: ${peerId.substring(0, 6)}...`);
-      this.triggerCoordinatorElection();
+      // NOTE: We do NOT trigger election here. Coordinator is sticky.
+      // Election only happens on heartbeat timeout or coordinator disconnect.
+      if (!this.coordinatorId) {
+        // First peer in room - elect now
+        this.triggerCoordinatorElection();
+      }
     }
   }
 
