@@ -135,8 +135,8 @@ document.getElementById('app').innerHTML = `
 const roomInput = document.getElementById('roomId');
 const params = new URLSearchParams(window.location.search);
 const urlRoom = params.get('room') || params.get('session');
-const coordinatorEnabled = ((params.get('coord') || params.get('coordinator') || '').toLowerCase());
-const COORD_ON = coordinatorEnabled === '1' || coordinatorEnabled === 'true' || coordinatorEnabled === 'yes';
+const coordinatorDisabled = ((params.get('coord') || params.get('coordinator') || '').toLowerCase());
+const COORD_ON = coordinatorDisabled !== '0' && coordinatorDisabled !== 'false' && coordinatorDisabled !== 'no';
 if (urlRoom) {
     roomInput.value = urlRoom;
     log(`Prefilled room ID from URL: ${urlRoom}`, 'info');
