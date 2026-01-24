@@ -57,9 +57,7 @@ export class PeerCoordinator {
 
     // Start listening for coordinator heartbeats
     this.startCoordinatorWatchdog();
-    
-    // Elect immediately on startup (I am the first peer until others register)
-    this.triggerCoordinatorElection();
+    // NOTE: Do NOT elect here. Watchdog will trigger election on timeout.
   }
 
   /**
@@ -105,7 +103,11 @@ export class PeerCoordinator {
    * Check if current coordinator is healthy
    */
   checkCoordinatorHealth() {
-    if (!this.coordinatorId) return; // No coordinator yet
+    if (!this.coordinatorId) {
+      // No coordinator selected yet; attempt deterministic election
+      this.triggerCoordinatorElection();
+      return;
+    }
     if (this.coordinatorId === this.myPeerId) return; // We're the coordinator
 
     const coordinator = this.knownPeers.get(this.coordinatorId);
@@ -251,6 +253,10 @@ export class PeerCoordinator {
       if (candidateId) {
         this.registerPeer(candidateId);
       }
+      // If no coordinator yet, elect deterministically now
+      if (!this.coordinatorId) {
+        this.triggerCoordinatorElection();
+      }
       return;
     }
 
@@ -258,6 +264,12 @@ export class PeerCoordinator {
       const { coordinatorId, knownPeers: peers } = payload;
       if (coordinatorId) {
         this.updatePeerHeartbeat(coordinatorId);
+        // Adopt coordinator if we don't have one yet
+        if (!this.coordinatorId) {
+          this.coordinatorId = coordinatorId;
+          this.isCoordinator = this.coordinatorId === this.myPeerId;
+          if (this.isCoordinator) this.startCoordinatorHeartbeat();
+        }
       }
 
       // Register peers mentioned in heartbeat
@@ -267,8 +279,7 @@ export class PeerCoordinator {
         }
       }
 
-      // NOTE: Do NOT re-run election on heartbeat. Coordinator is sticky.
-      // Only re-elect on coordinator timeout via watchdog, not on every heartbeat.
+      // Do NOT re-run election on heartbeat. Coordinator is sticky unless dead.
       return;
     }
   }
