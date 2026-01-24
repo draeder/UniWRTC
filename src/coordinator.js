@@ -269,8 +269,8 @@ export class PeerCoordinator {
         }
       }
 
-      // Re-run election using current live peers; lowest ID wins deterministically
-      this.triggerCoordinatorElection();
+      // NOTE: Do NOT re-run election on heartbeat. Coordinator is sticky.
+      // Only re-elect on coordinator timeout via watchdog, not on every heartbeat.
       return;
     }
   }
