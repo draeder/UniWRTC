@@ -1,7 +1,6 @@
 import './style.css';
 import UniWRTCClient from '../client-browser.js';
 import { createNostrClient } from './nostr/nostrClient.js';
-import { PeerCoordinator } from './coordinator.js';
 import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 
 // Make UniWRTCClient available globally for backwards compatibility
@@ -9,10 +8,8 @@ window.UniWRTCClient = UniWRTCClient;
 
 // Nostr is the default transport (no toggle)
 let nostrClient = null;
-let coordinator = null;
 let myPeerId = null;
 let mySessionNonce = null;
-let sessionStartedAtMs = 0;
 const peerSessions = new Map();
 const peerProbeState = new Map();
 const peerResyncState = new Map();
@@ -308,16 +305,15 @@ function isPoliteFor(peerId) {
 function sendSignal(to, payload) {
     if (!nostrClient) throw new Error('Not connected to Nostr');
 
+    const toSession = peerSessions.get(to);
     const type = payload?.type;
-    const isBroadcast = !to;
-    const toSession = isBroadcast ? null : peerSessions.get(to);
-    const needsToSession = !isBroadcast && type !== 'probe';
+    const needsToSession = type !== 'probe';
 
     if (needsToSession && !toSession) throw new Error('No peer session yet');
 
     return nostrClient.send({
         ...payload,
-        ...(to ? { to } : {}),
+        to,
         ...(needsToSession ? { toSession } : {}),
         fromSession: mySessionNonce,
     });
@@ -489,15 +485,10 @@ async function connectNostr() {
             await nostrClient.disconnect();
             nostrClient = null;
         }
-        if (coordinator) {
-            coordinator.destroy();
-            coordinator = null;
-        }
 
         // Reset local peer state to avoid stale sessions targeting the wrong browser tab.
         myPeerId = myPeerId || ensureIdentity();
         mySessionNonce = null;
-        sessionStartedAtMs = 0;
         peerSessions.clear();
         peerProbeState.clear();
         readyPeers.clear();
@@ -534,115 +525,64 @@ async function connectNostr() {
         const myPubkey = myPeerId || ensureIdentity();
         myPeerId = myPubkey;
         mySessionNonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
-        sessionStartedAtMs = Date.now();
         document.getElementById('clientId').textContent = myPubkey.substring(0, 16) + '...';
         document.getElementById('sessionId').textContent = effectiveRoom;
 
-        const makeClient = (relayUrl) => {
-            const candidateClient = createNostrClient({
-                relayUrl,
-                room: effectiveRoom,
-                secretKeyHex: mySecretKeyHex,
-                onState: (state) => {
-                    if (state === 'connected') updateStatus(true);
-                    if (state === 'disconnected') updateStatus(false);
-                },
-                onNotice: (notice) => {
-                    log(`Relay NOTICE (${relayUrl}): ${String(notice)}`, 'warning');
-                },
-                onOk: ({ id, ok, message }) => {
-                    if (ok === false) log(`Relay rejected event ${String(id).slice(0, 8)}...: ${String(message)}`, 'error');
-                },
-                onPayload: async ({ from, payload, createdAt }) => {
-                    const peerId = from;
-                    if (!peerId || peerId === myPeerId) return;
+        const makeClient = (relayUrl) => createNostrClient({
+            relayUrl,
+            room: effectiveRoom,
+            secretKeyHex: mySecretKeyHex,
+            onState: (state) => {
+                if (state === 'connected') updateStatus(true);
+                if (state === 'disconnected') updateStatus(false);
+            },
+            onNotice: (notice) => {
+                log(`Relay NOTICE (${relayUrl}): ${String(notice)}`, 'warning');
+            },
+            onOk: ({ id, ok, message }) => {
+                if (ok === false) log(`Relay rejected event ${String(id).slice(0, 8)}...: ${String(message)}`, 'error');
+            },
+            onPayload: async ({ from, payload }) => {
+                const peerId = from;
+                if (!peerId || peerId === myPeerId) return;
 
-                    // Ignore anything arriving on a non-selected relay client while we're still probing relays.
-                    if (!nostrClient || nostrClient !== candidateClient) return;
+                // Use the existing peer list UI as a simple "seen peers" list
+                if (!peerConnections.has(peerId)) {
+                    peerConnections.set(peerId, null);
+                    updatePeerList();
+                    log(`Peer seen: ${peerId.substring(0, 6)}...`, 'success');
+                }
 
-                    // Ignore relay history from before this session started to avoid acting on stale probes/acks.
-                    const isStaleByCreatedAt = sessionStartedAtMs && typeof createdAt === 'number' && (createdAt * 1000) < sessionStartedAtMs - 1000;
-                    if (isStaleByCreatedAt) return;
+                if (!payload || typeof payload !== 'object') return;
 
-                    if (!payload || typeof payload !== 'object') return;
+                // NOTE: Do NOT learn/update peerSessions from arbitrary relay history.
+                // Only trust:
+                // - `hello` (broadcast presence)
+                // - messages targeted to this tab via `toSession === mySessionNonce`
 
-                    const isStaleByPayloadTimestamp = sessionStartedAtMs && typeof payload.timestamp === 'number' && payload.timestamp < sessionStartedAtMs - 1000;
-                    if (isStaleByPayloadTimestamp) return;
-
-                    // Use the existing peer list UI as a simple "seen peers" list
-                    if (!peerConnections.has(peerId)) {
-                        peerConnections.set(peerId, null);
-                        updatePeerList();
-                        log(`Peer seen: ${peerId.substring(0, 6)}...`, 'success');
-                    }
-                    coordinator?.registerPeer(peerId);
-
-                    // Coordinator control-plane messages
-                    if (payload.type === 'coordinator-candidate' || payload.type === 'coordinator-heartbeat') {
-                        coordinator?.handleCoordinatorMessage(payload);
+                // Presence
+                if (payload.type === 'hello') {
+                    if (!myPeerId || !mySessionNonce) return;
+                    if (typeof payload.session !== 'string' || payload.session.length < 6) return;
+                    const prev = peerSessions.get(peerId);
+                    peerSessions.set(peerId, payload.session);
+                    if (!prev || prev !== payload.session) {
+                        log(`Peer session updated: ${peerId.substring(0, 6)}...`, 'info');
                     }
 
-                    // NOTE: Do NOT learn/update peerSessions from arbitrary relay history.
-                    // Only trust:
-                    // - `hello` (broadcast presence)
-                    // - messages targeted to this tab via `toSession === mySessionNonce`
-
-                    // Presence
-                    if (payload.type === 'hello') {
-                        if (!myPeerId || !mySessionNonce) return;
-                        if (typeof payload.session !== 'string' || payload.session.length < 6) return;
-                        const prev = peerSessions.get(peerId);
-                        peerSessions.set(peerId, payload.session);
-                        if (!prev || prev !== payload.session) {
-                            log(`Peer session updated: ${peerId.substring(0, 6)}...`, 'info');
-                        }
-
-                        if (prev && prev !== payload.session) {
-                            readyPeers.delete(peerId);
-                        }
-
-                        // We may receive peer presence while still selecting a relay.
-                        // Store and probe once we have a selected/connected `nostrClient`.
-                        deferredHelloPeers.add(peerId);
-                        await maybeProbePeer(peerId);
-                        return;
+                    if (prev && prev !== payload.session) {
+                        readyPeers.delete(peerId);
                     }
 
-                    if (payload.type === 'probe') {
-                        // Learn the peer's session from a live message.
-                        if (typeof payload.fromSession === 'string' && payload.fromSession.length >= 6) {
-                            const prev = peerSessions.get(peerId);
-                            if (!prev || prev !== payload.fromSession) {
-                                peerSessions.set(peerId, payload.fromSession);
-                                log(`Peer session ${prev ? 'rotated' : 'learned'}: ${peerId.substring(0, 6)}...`, 'info');
-                                readyPeers.delete(peerId);
-                            }
-                        }
+                    // We may receive peer presence while still selecting a relay.
+                    // Store and probe once we have a selected/connected `nostrClient`.
+                    deferredHelloPeers.add(peerId);
+                    await maybeProbePeer(peerId);
+                    return;
+                }
 
-                        // Reply directly to the sender's session (fromSession) so the initiator doesn't drop it.
-                        try {
-                            await sendSignalToSession(peerId, { type: 'probe-ack', probeId: payload.probeId }, payload.fromSession);
-                            log(`Probe ack -> ${peerId.substring(0, 6)}...`, 'info');
-                        } catch (e) {
-                            log(`Probe-ack failed: ${e?.message || e}`, 'warning');
-                        }
-                        return;
-                    }
-
-                    // Only accept signaling intended for THIS browser session
-                    if (payload.toSession && payload.toSession !== mySessionNonce) {
-                        logDrop(peerId, payload, 'toSession mismatch');
-                        await resyncPeerSession(peerId, 'toSession mismatch');
-                        return;
-                    }
-
-                    // Signaling messages are always targeted
-                    if (payload.to && payload.to !== myPeerId) {
-                        logDrop(peerId, payload, 'to mismatch');
-                        return;
-                    }
-
-                    // Now that we know it's targeted to this session, we can safely learn peer session.
+                if (payload.type === 'probe') {
+                    // Learn the peer's session from a live message.
                     if (typeof payload.fromSession === 'string' && payload.fromSession.length >= 6) {
                         const prev = peerSessions.get(peerId);
                         if (!prev || prev !== payload.fromSession) {
@@ -652,128 +592,158 @@ async function connectNostr() {
                         }
                     }
 
-                    if (payload.type === 'probe-ack') {
-                        const last = peerProbeState.get(peerId);
-                        if (!last || !last.probeId || !payload.probeId || payload.probeId !== last.probeId) {
-                            logDrop(peerId, payload, 'probeId mismatch');
-                            return;
-                        }
-                        // Peer session can legitimately rotate between hello/probe/ack (reloads, relay history).
-                        // Since this message is already targeted to our toSession, accept it and update our view.
-                        if (typeof payload.fromSession === 'string' && payload.fromSession.length >= 6) {
-                            if (peerSessions.get(peerId) !== payload.fromSession) {
-                                peerSessions.set(peerId, payload.fromSession);
-                            }
-                            if (last.session !== payload.fromSession) {
-                                last.session = payload.fromSession;
-                            }
-                        }
-                        if (Date.now() - last.ts > 30000) {
-                            logDrop(peerId, payload, 'stale probe-ack');
-                            return;
-                        }
+                    // Reply directly to the sender's session (fromSession) so the initiator doesn't drop it.
+                    try {
+                        await sendSignalToSession(peerId, { type: 'probe-ack', probeId: payload.probeId }, payload.fromSession);
+                        log(`Probe ack -> ${peerId.substring(0, 6)}...`, 'info');
+                    } catch (e) {
+                        log(`Probe-ack failed: ${e?.message || e}`, 'warning');
+                    }
+                    return;
+                }
 
-                        readyPeers.add(peerId);
-                        if (shouldInitiateWith(peerId)) {
-                            log(`Probe ack <- ${peerId.substring(0, 6)}...`, 'info');
-                            await ensurePeerConnection(peerId);
+                // Only accept signaling intended for THIS browser session
+                if (payload.toSession && payload.toSession !== mySessionNonce) {
+                    logDrop(peerId, payload, 'toSession mismatch');
+                    await resyncPeerSession(peerId, 'toSession mismatch');
+                    return;
+                }
+
+                // Signaling messages are always targeted
+                if (payload.to && payload.to !== myPeerId) {
+                    logDrop(peerId, payload, 'to mismatch');
+                    return;
+                }
+
+                // Now that we know it's targeted to this session, we can safely learn peer session.
+                if (typeof payload.fromSession === 'string' && payload.fromSession.length >= 6) {
+                    const prev = peerSessions.get(peerId);
+                    if (!prev || prev !== payload.fromSession) {
+                        peerSessions.set(peerId, payload.fromSession);
+                        log(`Peer session ${prev ? 'rotated' : 'learned'}: ${peerId.substring(0, 6)}...`, 'info');
+                        readyPeers.delete(peerId);
+                    }
+                }
+
+                if (payload.type === 'probe-ack') {
+                    const last = peerProbeState.get(peerId);
+                    if (!last || !last.probeId || !payload.probeId || payload.probeId !== last.probeId) {
+                        logDrop(peerId, payload, 'probeId mismatch');
+                        return;
+                    }
+                    // Peer session can legitimately rotate between hello/probe/ack (reloads, relay history).
+                    // Since this message is already targeted to our toSession, accept it and update our view.
+                    if (typeof payload.fromSession === 'string' && payload.fromSession.length >= 6) {
+                        if (peerSessions.get(peerId) !== payload.fromSession) {
+                            peerSessions.set(peerId, payload.fromSession);
                         }
+                        if (last.session !== payload.fromSession) {
+                            last.session = payload.fromSession;
+                        }
+                    }
+                    if (Date.now() - last.ts > 30000) {
+                        logDrop(peerId, payload, 'stale probe-ack');
                         return;
                     }
 
-                    if (payload.type === 'signal-offer' && payload.sdp) {
-                        log(`Received offer from ${peerId.substring(0, 6)}...`, 'info');
-                        let pc = await ensurePeerConnection(peerId);
-                        if (!pc) {
-                            // As the receiver we should always accept an offer even if probe logic didn't run.
-                            pc = await resetPeerConnection(peerId);
-                        }
-                        if (!(pc instanceof RTCPeerConnection)) return;
+                    readyPeers.add(peerId);
+                    if (shouldInitiateWith(peerId)) {
+                        log(`Probe ack <- ${peerId.substring(0, 6)}...`, 'info');
+                        await ensurePeerConnection(peerId);
+                    }
+                    return;
+                }
 
-                        // Offer collision handling: if we're not stable, decide whether to ignore or reset.
-                        const offerCollision = pc.signalingState !== 'stable';
-                        if (offerCollision && !isPoliteFor(peerId)) {
-                            log(`Ignoring offer collision from ${peerId.substring(0, 6)}...`, 'warning');
+                if (payload.type === 'signal-offer' && payload.sdp) {
+                    log(`Received offer from ${peerId.substring(0, 6)}...`, 'info');
+                    let pc = await ensurePeerConnection(peerId);
+                    if (!pc) {
+                        // As the receiver we should always accept an offer even if probe logic didn't run.
+                        pc = await resetPeerConnection(peerId);
+                    }
+                    if (!(pc instanceof RTCPeerConnection)) return;
+
+                    // Offer collision handling: if we're not stable, decide whether to ignore or reset.
+                    const offerCollision = pc.signalingState !== 'stable';
+                    if (offerCollision && !isPoliteFor(peerId)) {
+                        log(`Ignoring offer collision from ${peerId.substring(0, 6)}...`, 'warning');
+                        return;
+                    }
+                    if (offerCollision && isPoliteFor(peerId)) {
+                        log(`Offer collision; resetting connection with ${peerId.substring(0, 6)}...`, 'warning');
+                        await resetPeerConnection(peerId);
+                        const next = peerConnections.get(peerId);
+                        if (!(next instanceof RTCPeerConnection)) return;
+                        pc = next;
+                    }
+
+                    const pc2 = peerConnections.get(peerId);
+                    if (!(pc2 instanceof RTCPeerConnection)) return;
+
+                    // Only accept offers here.
+                    if (payload.sdp?.type && payload.sdp.type !== 'offer') {
+                        log(`Ignoring non-offer in signal-offer from ${peerId.substring(0, 6)}...`, 'warning');
+                        return;
+                    }
+
+                    await pc2.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+                    await flushPendingIce(peerId);
+                    if (pc2.signalingState !== 'have-remote-offer') {
+                        log(`Not answering; unexpected state: ${pc2.signalingState}`, 'warning');
+                        return;
+                    }
+                    const answer = await pc2.createAnswer();
+                    await pc2.setLocalDescription(answer);
+                    try {
+                        await sendSignal(peerId, { type: 'signal-answer', sdp: { type: pc2.localDescription.type, sdp: pc2.localDescription.sdp } });
+                        log(`Sent answer to ${peerId.substring(0, 6)}...`, 'success');
+                    } catch (e) {
+                        log(`Failed to send answer: ${e?.message || e}`, 'error');
+                    }
+                    return;
+                }
+
+                if (payload.type === 'signal-answer' && payload.sdp) {
+                    log(`Received answer from ${peerId.substring(0, 6)}...`, 'info');
+                    const pc = peerConnections.get(peerId);
+                    if (pc instanceof RTCPeerConnection) {
+                        if (payload.sdp?.type && payload.sdp.type !== 'answer') {
+                            log(`Ignoring non-answer in signal-answer from ${peerId.substring(0, 6)}...`, 'warning');
                             return;
                         }
-                        if (offerCollision && isPoliteFor(peerId)) {
-                            log(`Offer collision; resetting connection with ${peerId.substring(0, 6)}...`, 'warning');
-                            await resetPeerConnection(peerId);
-                            const next = peerConnections.get(peerId);
-                            if (!(next instanceof RTCPeerConnection)) return;
-                            pc = next;
-                        }
-
-                        const pc2 = peerConnections.get(peerId);
-                        if (!(pc2 instanceof RTCPeerConnection)) return;
-
-                        // Only accept offers here.
-                        if (payload.sdp?.type && payload.sdp.type !== 'offer') {
-                            log(`Ignoring non-offer in signal-offer from ${peerId.substring(0, 6)}...`, 'warning');
+                        // Perfect negotiation guard: only accept an answer when we have a local offer
+                        if (pc.signalingState !== 'have-local-offer') {
+                            log(`Ignoring answer; unexpected signaling state: ${pc.signalingState}`, 'warning');
                             return;
                         }
-
-                        await pc2.setRemoteDescription(new RTCSessionDescription(payload.sdp));
+                        await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
                         await flushPendingIce(peerId);
-                        if (pc2.signalingState !== 'have-remote-offer') {
-                            log(`Not answering; unexpected state: ${pc2.signalingState}`, 'warning');
-                            return;
-                        }
-                        const answer = await pc2.createAnswer();
-                        await pc2.setLocalDescription(answer);
-                        try {
-                            await sendSignal(peerId, { type: 'signal-answer', sdp: { type: pc2.localDescription.type, sdp: pc2.localDescription.sdp } });
-                            log(`Sent answer to ${peerId.substring(0, 6)}...`, 'success');
-                        } catch (e) {
-                            log(`Failed to send answer: ${e?.message || e}`, 'error');
-                        }
-                        return;
                     }
+                    return;
+                }
 
-                    if (payload.type === 'signal-answer' && payload.sdp) {
-                        log(`Received answer from ${peerId.substring(0, 6)}...`, 'info');
-                        const pc = peerConnections.get(peerId);
-                        if (pc instanceof RTCPeerConnection) {
-                            if (payload.sdp?.type && payload.sdp.type !== 'answer') {
-                                log(`Ignoring non-answer in signal-answer from ${peerId.substring(0, 6)}...`, 'warning');
-                                return;
-                            }
-                            // Perfect negotiation guard: only accept an answer when we have a local offer
-                            if (pc.signalingState !== 'have-local-offer') {
-                                log(`Ignoring answer; unexpected signaling state: ${pc.signalingState}`, 'warning');
-                                return;
-                            }
-                            await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
-                            await flushPendingIce(peerId);
-                        }
-                        return;
+                if (payload.type === 'signal-ice' && payload.candidate) {
+                    log(`Received ICE candidate from ${peerId.substring(0, 6)}...`, 'info');
+                    try {
+                        await addIceCandidateSafely(peerId, payload.candidate);
+                    } catch (e) {
+                        log(`Failed to add ICE candidate: ${e?.message || e}`, 'warning');
                     }
+                    return;
+                }
 
-                    if (payload.type === 'signal-ice' && payload.candidate) {
-                        log(`Received ICE candidate from ${peerId.substring(0, 6)}...`, 'info');
+                if (payload.type === 'signal-ice-batch' && Array.isArray(payload.candidates)) {
+                    log(`Received ICE batch (${payload.candidates.length}) from ${peerId.substring(0, 6)}...`, 'info');
+                    for (const c of payload.candidates) {
                         try {
-                            await addIceCandidateSafely(peerId, payload.candidate);
+                            await addIceCandidateSafely(peerId, c);
                         } catch (e) {
                             log(`Failed to add ICE candidate: ${e?.message || e}`, 'warning');
                         }
-                        return;
                     }
-
-                    if (payload.type === 'signal-ice-batch' && Array.isArray(payload.candidates)) {
-                        log(`Received ICE batch (${payload.candidates.length}) from ${peerId.substring(0, 6)}...`, 'info');
-                        for (const c of payload.candidates) {
-                            try {
-                                await addIceCandidateSafely(peerId, c);
-                            } catch (e) {
-                                log(`Failed to add ICE candidate: ${e?.message || e}`, 'warning');
-                            }
-                        }
-                    }
-                },
-            });
-
-            return candidateClient;
-        };
+                }
+            },
+        });
 
         const tryOneRelay = async (relayUrl) => {
             const candidateClient = makeClient(relayUrl);
@@ -816,20 +786,6 @@ async function connectNostr() {
         }
 
         nostrClient = selected.client;
-        coordinator = new PeerCoordinator({
-            myPeerId,
-            room: effectiveRoom,
-            sendSignal,
-            nostrClient,
-        });
-        coordinator.onCoordinatorChanged = ({ isNowCoordinator }) => {
-            updateRole(isNowCoordinator ? 'coordinator' : 'peer');
-        };
-        await coordinator.initialize();
-        coordinator.triggerCoordinatorElection();
-        const status = coordinator.getStatus();
-        updateRole(status.isCoordinator ? 'coordinator' : 'peer');
-
         document.getElementById('relayUrl').value = selected.relayUrl;
         log(`Selected relay: ${selected.relayUrl}`, 'success');
 
@@ -974,15 +930,10 @@ async function connectWebRTC() {
 
 window.disconnect = function() {
     updateRole(null);
-    if (coordinator) {
-        coordinator.destroy();
-        coordinator = null;
-    }
     if (nostrClient) {
         nostrClient.disconnect().catch(() => {});
         nostrClient = null;
         mySessionNonce = null;
-        sessionStartedAtMs = 0;
         peerSessions.clear();
         peerProbeState.clear();
         readyPeers.clear();
