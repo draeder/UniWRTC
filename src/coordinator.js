@@ -255,23 +255,6 @@ export class PeerCoordinator {
       const { coordinatorId, knownPeers: peers } = payload;
       if (coordinatorId) {
         this.updatePeerHeartbeat(coordinatorId);
-
-        // Update our view of the coordinator
-        if (this.coordinatorId !== coordinatorId) {
-          this.coordinatorId = coordinatorId;
-          this.isCoordinator = coordinatorId === this.myPeerId;
-
-          if (this.isCoordinator) {
-            this.startCoordinatorHeartbeat();
-          } else {
-            this.stopCoordinatorHeartbeat();
-          }
-
-          this.onCoordinatorChanged?.({
-            coordinatorId: this.coordinatorId,
-            isNowCoordinator: this.isCoordinator,
-          });
-        }
       }
 
       // Register peers mentioned in heartbeat
@@ -280,6 +263,9 @@ export class PeerCoordinator {
           this.registerPeer(peerId);
         }
       }
+
+      // Re-run election using current live peers; lowest ID wins deterministically
+      this.triggerCoordinatorElection();
       return;
     }
   }
