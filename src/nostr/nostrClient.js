@@ -55,24 +55,10 @@ export function createNostrClient({ relayUrl, room, onPayload, onState, onNotice
       return;
     }
 
-    // IMPORTANT: For this demo we want each browser tab to have a distinct peer ID.
-    // sessionStorage is per-tab, while localStorage is shared across tabs.
-    let stored = effectiveStorage.getItem(storageKey);
-
-    // If stored value looks like an array string from prior buggy storage, clear it
-    if (stored && stored.includes(',')) {
-      effectiveStorage.removeItem(storageKey);
-      stored = null;
-    }
-
-    if (!isHex64(stored)) {
-      const secretBytes = generateSecretKey();
-      state.secretKeyHex = bytesToHex(secretBytes);
-      effectiveStorage.setItem(storageKey, state.secretKeyHex);
-    } else {
-      state.secretKeyHex = stored;
-    }
-
+    // Generate a fresh unique peer ID on every page load
+    // This ensures each browser tab/reload gets a new identity
+    const secretBytes = generateSecretKey();
+    state.secretKeyHex = bytesToHex(secretBytes);
     state.pubkey = getPublicKey(state.secretKeyHex);
   }
 

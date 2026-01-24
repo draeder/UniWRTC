@@ -12,6 +12,7 @@ let myPeerId = null;
 let mySessionNonce = null;
 const peerSessions = new Map();
 const peerProbeState = new Map();
+const peerResyncState = new Map();
 const readyPeers = new Set();
 const deferredHelloPeers = new Set();
 
@@ -42,23 +43,17 @@ function isHex64(s) {
     return typeof s === 'string' && /^[0-9a-fA-F]{64}$/.test(s);
 }
 
+// Store the secret key for use with all Nostr clients
+let mySecretKeyHex = null;
+
 function ensureIdentity() {
-    // Must match the key used in createNostrClient() so the pubkey stays consistent.
-    const storageKey = 'nostr-secret-key-tab';
-    let stored = sessionStorage.getItem(storageKey);
-
-    if (stored && stored.includes(',')) {
-        sessionStorage.removeItem(storageKey);
-        stored = null;
-    }
-
-    if (!isHex64(stored)) {
+    // Generate a fresh unique peer ID on every page load
+    // This ensures each browser tab/reload gets a new identity
+    if (!mySecretKeyHex) {
         const secretBytes = generateSecretKey();
-        stored = bytesToHex(secretBytes);
-        sessionStorage.setItem(storageKey, stored);
+        mySecretKeyHex = bytesToHex(secretBytes);
     }
-
-    return getPublicKey(stored);
+    return getPublicKey(mySecretKeyHex);
 }
 
 // Initialize app
@@ -100,6 +95,11 @@ document.getElementById('app').innerHTML = `
                     <div id="sessionId" data-testid="sessionId" style="font-family: monospace; color: #333; margin-top: 5px;">Not joined</div>
                 </div>
             </div>
+        </div>
+
+        <div class="card">
+            <h2>Role</h2>
+            <div id="roleBadge" data-testid="roleBadge" class="status-badge status-disconnected">Not assigned</div>
         </div>
 
         <div class="card">
@@ -230,6 +230,27 @@ function updateStatus(connected) {
     }
 }
 
+function updateRole(role) {
+    const badge = document.getElementById('roleBadge');
+    if (!badge) return;
+
+    if (role === 'coordinator') {
+        badge.textContent = 'Coordinator';
+        badge.className = 'status-badge status-connected';
+        // If assigned a role, we must be connected
+        updateStatus(true);
+    } else if (role === 'peer') {
+        badge.textContent = 'Peer';
+        badge.className = 'status-badge status-info';
+        // If assigned a role, we must be connected
+        updateStatus(true);
+    } else {
+        badge.textContent = 'Not assigned';
+        badge.className = 'status-badge status-disconnected';
+        updateStatus(false);
+    }
+}
+
 function updatePeerList() {
     const peerList = document.getElementById('peerList');
     if (!peerList) return;
@@ -325,6 +346,28 @@ async function maybeProbePeer(peerId) {
         log(`Probing peer ${peerId.substring(0, 6)}...`, 'info');
     } catch (e) {
         log(`Probe failed: ${e?.message || e}`, 'warning');
+    }
+}
+
+// Force a probe to resync sessions when we detect mismatched toSession
+async function resyncPeerSession(peerId, reason = 'session mismatch') {
+    if (!nostrClient) return;
+
+    const now = Date.now();
+    const last = peerResyncState.get(peerId) || 0;
+    if (now - last < 3000) return; // throttle resync attempts
+    peerResyncState.set(peerId, now);
+
+    const probeId = Math.random().toString(36).slice(2, 10) + now.toString(36);
+    // Track probe so probe-ack can update readiness/session
+    const prevSession = peerSessions.get(peerId) || null;
+    peerProbeState.set(peerId, { session: prevSession, ts: now, probeId });
+
+    try {
+        await sendSignal(peerId, { type: 'probe', probeId });
+        log(`Resyncing session with ${peerId.substring(0, 6)}... (${reason})`, 'info');
+    } catch (e) {
+        log(`Resync probe failed: ${e?.message || e}`, 'warning');
     }
 }
 
@@ -488,6 +531,7 @@ async function connectNostr() {
         const makeClient = (relayUrl) => createNostrClient({
             relayUrl,
             room: effectiveRoom,
+            secretKeyHex: mySecretKeyHex,
             onState: (state) => {
                 if (state === 'connected') updateStatus(true);
                 if (state === 'disconnected') updateStatus(false);
@@ -561,6 +605,7 @@ async function connectNostr() {
                 // Only accept signaling intended for THIS browser session
                 if (payload.toSession && payload.toSession !== mySessionNonce) {
                     logDrop(peerId, payload, 'toSession mismatch');
+                    await resyncPeerSession(peerId, 'toSession mismatch');
                     return;
                 }
 
@@ -879,6 +924,7 @@ async function connectWebRTC() {
 }
 
 window.disconnect = function() {
+    updateRole(null);
     if (nostrClient) {
         nostrClient.disconnect().catch(() => {});
         nostrClient = null;
