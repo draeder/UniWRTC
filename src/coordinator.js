@@ -57,8 +57,9 @@ export class PeerCoordinator {
 
     // Start listening for coordinator heartbeats
     this.startCoordinatorWatchdog();
-    // NOTE: We do NOT trigger auto-election here.
-    // Election only happens when we receive peer announcements (registerPeer calls triggerCoordinatorElection)
+    
+    // Elect immediately on startup (I am the first peer until others register)
+    this.triggerCoordinatorElection();
   }
 
   /**
@@ -204,12 +205,9 @@ export class PeerCoordinator {
         lastSeen: Date.now(),
       });
       console.log(`[Coordinator] Registered peer: ${peerId.substring(0, 6)}...`);
-      // NOTE: We do NOT trigger election here. Coordinator is sticky.
-      // Election only happens on heartbeat timeout or coordinator disconnect.
-      if (!this.coordinatorId) {
-        // First peer in room - elect now
-        this.triggerCoordinatorElection();
-      }
+      // NOTE: Do NOT trigger election here. NEVER.
+      // Coordinator is determined only by watchdog timeout or explicit disconnect.
+      // No registration-triggered elections.
     }
   }
 
