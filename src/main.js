@@ -711,6 +711,11 @@ async function connectNostr() {
                             log(`Ignoring non-answer in signal-answer from ${peerId.substring(0, 6)}...`, 'warning');
                             return;
                         }
+                        // Perfect negotiation guard: only accept an answer when we have a local offer
+                        if (pc.signalingState !== 'have-local-offer') {
+                            log(`Ignoring answer; unexpected signaling state: ${pc.signalingState}`, 'warning');
+                            return;
+                        }
                         await pc.setRemoteDescription(new RTCSessionDescription(payload.sdp));
                         await flushPendingIce(peerId);
                     }
