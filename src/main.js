@@ -542,8 +542,26 @@ async function connectNostr() {
             room: effectiveRoom,
             secretKeyHex: mySecretKeyHex,
             onState: (state) => {
-                if (state === 'connected') updateStatus(true);
-                if (state === 'disconnected') updateStatus(false);
+                if (state === 'connected') {
+                    updateStatus(true);
+                    coordinator?.onRelayReconnect();
+                }
+                if (state === 'disconnected') {
+                    updateStatus(false);
+                    coordinator?.onRelayDisconnect();
+                    // If coordinator and no peers connected, attempt reconnect
+                    if (coordinator) {
+                        const status = coordinator.getStatus();
+                        if (status.knownPeersCount === 0) {
+                            log('All peers disconnected, attempting relay reconnect...', 'warning');
+                            setTimeout(() => {
+                                if (!nostrClient || !nostrClient.ws || nostrClient.ws.readyState !== WebSocket.OPEN) {
+                                    connectNostr().catch(e => log(`Reconnect failed: ${e.message}`, 'error'));
+                                }
+                            }, 2000);
+                        }
+                    }
+                }
             },
             onNotice: (notice) => {
                 log(`Relay NOTICE (${relayUrl}): ${String(notice)}`, 'warning');

@@ -321,6 +321,37 @@ export class PeerCoordinator {
   }
 
   /**
+   * Handle relay disconnection - mark self as disconnected and trigger re-election
+   */
+  onRelayDisconnect() {
+    console.log('[Coordinator] Relay disconnected, marking self as disconnected');
+    // If we were coordinator, stop heartbeat
+    if (this.isCoordinator) {
+      this.stopCoordinatorHeartbeat();
+      this.isCoordinator = false;
+    }
+    // Mark ourselves as disconnected by removing from known peers
+    this.knownPeers.delete(this.myPeerId);
+    // Trigger re-election among remaining connected peers
+    this.triggerCoordinatorElection(true);
+  }
+
+  /**
+   * Handle relay reconnection - add self back and trigger re-election
+   */
+  onRelayReconnect() {
+    console.log('[Coordinator] Relay reconnected, rejoining coordinator pool');
+    // Add ourselves back to known peers
+    this.knownPeers.set(this.myPeerId, {
+      joinedAt: Date.now(),
+      isAlive: true,
+      lastSeen: Date.now(),
+    });
+    // Trigger re-election to see if we should become coordinator
+    this.triggerCoordinatorElection(true);
+  }
+
+  /**
    * Cleanup on disconnect
    */
   destroy() {
