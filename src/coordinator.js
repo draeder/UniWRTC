@@ -38,6 +38,10 @@ export class PeerCoordinator {
     this.ELECTION_WAIT_BEFORE_ANNOUNCE = 1000; // 1s after joining
   }
 
+  isHex64(s) {
+    return typeof s === 'string' && /^[0-9a-fA-F]{64}$/.test(s);
+  }
+
   /**
    * Initialize the coordinator system.
    * Call this when a peer joins the room.
@@ -57,7 +61,8 @@ export class PeerCoordinator {
 
     // Start listening for coordinator heartbeats
     this.startCoordinatorWatchdog();
-    // NOTE: Do NOT elect here. Watchdog will trigger election on timeout.
+    // Elect immediately using current knowledge (self only at startup)
+    this.triggerCoordinatorElection(true);
   }
 
   /**
@@ -104,30 +109,28 @@ export class PeerCoordinator {
    */
   checkCoordinatorHealth() {
     if (!this.coordinatorId) {
-      // No coordinator selected yet; attempt deterministic election
-      this.triggerCoordinatorElection();
+      this.triggerCoordinatorElection(true);
       return;
     }
-    if (this.coordinatorId === this.myPeerId) return; // We're the coordinator
-
     const coordinator = this.knownPeers.get(this.coordinatorId);
     if (!coordinator) {
-      // Coordinator is unknown, trigger election
-      this.triggerCoordinatorElection();
+      this.coordinatorId = null;
+      this.triggerCoordinatorElection(true);
       return;
     }
 
     const timeSinceLastHeartbeat = Date.now() - coordinator.lastSeen;
     if (timeSinceLastHeartbeat > this.COORDINATOR_ALIVE_TIMEOUT) {
-      // Coordinator is dead, trigger election
-      this.triggerCoordinatorElection();
+      this.coordinatorId = null;
+      this.triggerCoordinatorElection(true);
     }
   }
 
   /**
-   * Trigger coordinator election: peer with lowest ID becomes coordinator
+   * Trigger coordinator election: peer with lowest ID becomes coordinator.
+   * If we already have a coordinator, skip unless forced (on timeout/recovery).
    */
-  triggerCoordinatorElection() {
+  triggerCoordinatorElection(force = false) {
     console.log(`[Coordinator] Triggering election. Old: ${this.coordinatorId}`);
 
     const candidates = Array.from(this.knownPeers.keys()).filter((id) => {
@@ -138,14 +141,16 @@ export class PeerCoordinator {
 
     if (candidates.length === 0) {
       this.coordinatorId = null;
+      this.isCoordinator = false;
+      this.stopCoordinatorHeartbeat();
       return;
     }
 
-    // Sort lexicographically; lowest ID is coordinator
     candidates.sort();
     const newCoordinator = candidates[0];
 
-    if (newCoordinator !== this.coordinatorId) {
+    // Sticky: only elect if none or forced (timeout/disconnect/init)
+    if (!this.coordinatorId || force) {
       const wasCoordinator = this.isCoordinator;
       this.coordinatorId = newCoordinator;
       this.isCoordinator = newCoordinator === this.myPeerId;
@@ -154,7 +159,6 @@ export class PeerCoordinator {
         `[Coordinator] Elected: ${newCoordinator.substring(0, 6)}... (was I coordinator: ${wasCoordinator}, am I now: ${this.isCoordinator})`
       );
 
-      // Notify observers of coordinator change
       this.onCoordinatorChanged?.({
         coordinatorId: this.coordinatorId,
         isNowCoordinator: this.isCoordinator,
@@ -183,6 +187,8 @@ export class PeerCoordinator {
           timestamp: Date.now(),
           knownPeers: Array.from(this.knownPeers.keys()),
         });
+        // Update own lastSeen since relay doesn't echo back our own messages
+        this.updatePeerHeartbeat(this.myPeerId);
       } catch (e) {
         console.warn('[Coordinator] Failed to send heartbeat:', e?.message);
       }
@@ -207,9 +213,7 @@ export class PeerCoordinator {
         lastSeen: Date.now(),
       });
       console.log(`[Coordinator] Registered peer: ${peerId.substring(0, 6)}...`);
-      // NOTE: Do NOT trigger election here. NEVER.
-      // Coordinator is determined only by watchdog timeout or explicit disconnect.
-      // No registration-triggered elections.
+      // Do not re-elect on registration; coordinator is sticky once chosen
     }
   }
 
@@ -236,7 +240,7 @@ export class PeerCoordinator {
     // If the coordinator disconnected, trigger immediate re-election
     if (peerId === this.coordinatorId) {
       console.log('[Coordinator] Coordinator disconnected! Triggering new election...');
-      this.triggerCoordinatorElection();
+      this.triggerCoordinatorElection(true);
     }
   }
 
@@ -253,10 +257,6 @@ export class PeerCoordinator {
       if (candidateId) {
         this.registerPeer(candidateId);
       }
-      // If no coordinator yet, elect deterministically now
-      if (!this.coordinatorId) {
-        this.triggerCoordinatorElection();
-      }
       return;
     }
 
@@ -264,12 +264,6 @@ export class PeerCoordinator {
       const { coordinatorId, knownPeers: peers } = payload;
       if (coordinatorId) {
         this.updatePeerHeartbeat(coordinatorId);
-        // Adopt coordinator if we don't have one yet
-        if (!this.coordinatorId) {
-          this.coordinatorId = coordinatorId;
-          this.isCoordinator = this.coordinatorId === this.myPeerId;
-          if (this.isCoordinator) this.startCoordinatorHeartbeat();
-        }
       }
 
       // Register peers mentioned in heartbeat
@@ -279,7 +273,6 @@ export class PeerCoordinator {
         }
       }
 
-      // Do NOT re-run election on heartbeat. Coordinator is sticky unless dead.
       return;
     }
   }
