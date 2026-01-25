@@ -256,6 +256,10 @@ export class PeerCoordinator {
       const { candidateId } = payload;
       if (candidateId) {
         this.registerPeer(candidateId);
+        // If we don't have a coordinator yet, trigger election (sticky election will pick lowest ID)
+        if (!this.coordinatorId) {
+          this.triggerCoordinatorElection(false);
+        }
       }
       return;
     }
@@ -264,6 +268,12 @@ export class PeerCoordinator {
       const { coordinatorId, knownPeers: peers } = payload;
       if (coordinatorId) {
         this.updatePeerHeartbeat(coordinatorId);
+        // Accept the heartbeat's coordinator if we don't have one yet
+        if (!this.coordinatorId) {
+          this.coordinatorId = coordinatorId;
+          this.isCoordinator = coordinatorId === this.myPeerId;
+          console.log(`[Coordinator] Accepted coordinator from heartbeat: ${coordinatorId.substring(0, 6)}...`);
+        }
       }
 
       // Register peers mentioned in heartbeat
