@@ -333,14 +333,14 @@ export class PeerCoordinator {
    */
   onRelayDisconnect() {
     console.log('[Coordinator] Relay disconnected, marking self as disconnected');
+    const wasCoordinator = this.isCoordinator;
     // If we were coordinator, stop heartbeat
-    if (this.isCoordinator) {
+    if (wasCoordinator) {
       this.stopCoordinatorHeartbeat();
-      this.isCoordinator = false;
     }
     // Mark ourselves as disconnected by removing from known peers
     this.knownPeers.delete(this.myPeerId);
-    // Trigger re-election among remaining connected peers
+    // Trigger re-election among remaining connected peers (this will update isCoordinator and fire callback)
     this.triggerCoordinatorElection(true);
   }
 
