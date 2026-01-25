@@ -149,8 +149,8 @@ export class PeerCoordinator {
     candidates.sort();
     const newCoordinator = candidates[0];
 
-    // Sticky: only elect if none or forced (timeout/disconnect/init)
-    if (!this.coordinatorId || force) {
+    // Elect if forced or the coordinator changed (choose lowest ID)
+    if (force || this.coordinatorId !== newCoordinator) {
       const wasCoordinator = this.isCoordinator;
       this.coordinatorId = newCoordinator;
       this.isCoordinator = newCoordinator === this.myPeerId;
@@ -256,10 +256,8 @@ export class PeerCoordinator {
       const { candidateId } = payload;
       if (candidateId) {
         this.registerPeer(candidateId);
-        // If we don't have a coordinator yet, trigger election (sticky election will pick lowest ID)
-        if (!this.coordinatorId) {
-          this.triggerCoordinatorElection(false);
-        }
+        // Re-evaluate election using current knowledge
+        this.triggerCoordinatorElection(false);
       }
       return;
     }
@@ -268,12 +266,8 @@ export class PeerCoordinator {
       const { coordinatorId, knownPeers: peers } = payload;
       if (coordinatorId) {
         this.updatePeerHeartbeat(coordinatorId);
-        // Accept the heartbeat's coordinator if we don't have one yet
-        if (!this.coordinatorId) {
-          this.coordinatorId = coordinatorId;
-          this.isCoordinator = coordinatorId === this.myPeerId;
-          console.log(`[Coordinator] Accepted coordinator from heartbeat: ${coordinatorId.substring(0, 6)}...`);
-        }
+        // Re-evaluate election based on updated knowledge
+        this.triggerCoordinatorElection(false);
       }
 
       // Register peers mentioned in heartbeat
