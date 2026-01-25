@@ -830,7 +830,7 @@ async function connectNostr() {
                 updateRole(isNowCoordinator ? 'coordinator' : 'peer');
             };
             await coordinator.initialize();
-            coordinator.triggerCoordinatorElection();
+            // initialize() already triggers election, just sync UI with current state
             const status = coordinator.getStatus();
             updateRole(status.isCoordinator ? 'coordinator' : 'peer');
         }

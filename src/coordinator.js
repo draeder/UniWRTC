@@ -140,9 +140,17 @@ export class PeerCoordinator {
     });
 
     if (candidates.length === 0) {
+      const wasCoordinator = this.isCoordinator;
       this.coordinatorId = null;
       this.isCoordinator = false;
       this.stopCoordinatorHeartbeat();
+      // Notify if status changed
+      if (wasCoordinator) {
+        this.onCoordinatorChanged?.({
+          coordinatorId: null,
+          isNowCoordinator: false,
+        });
+      }
       return;
     }
 
