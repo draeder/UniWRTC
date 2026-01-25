@@ -131,21 +131,26 @@ export class PeerCoordinator {
    * If we already have a coordinator, skip unless forced (on timeout/recovery).
    */
   triggerCoordinatorElection(force = false) {
-    console.log(`[Coordinator] Triggering election. Old: ${this.coordinatorId}`);
-
     const candidates = Array.from(this.knownPeers.keys()).filter((id) => {
       const peer = this.knownPeers.get(id);
       const timeSinceLastSeen = Date.now() - peer.lastSeen;
       return timeSinceLastSeen < this.PEER_ALIVE_TIMEOUT;
     });
 
+    console.log(
+      `[Coordinator] Election: force=${force}, candidates=${candidates.length}, known=${this.knownPeers.size}, alive=${candidates.map(c => c.substring(0, 6)).join(',')}`,
+      `currentCoord=${this.coordinatorId?.substring(0, 6) || 'none'}`
+    );
+
     if (candidates.length === 0) {
       const wasCoordinator = this.isCoordinator;
       this.coordinatorId = null;
       this.isCoordinator = false;
       this.stopCoordinatorHeartbeat();
+      console.log(`[Coordinator] No candidates, clearing coordinator. Was I coordinator: ${wasCoordinator}`);
       // Notify if status changed
       if (wasCoordinator) {
+        console.log(`[Coordinator] Firing callback: wasCoordinator=true, now=false`);
         this.onCoordinatorChanged?.({
           coordinatorId: null,
           isNowCoordinator: false,
@@ -166,6 +171,7 @@ export class PeerCoordinator {
       console.log(
         `[Coordinator] Elected: ${newCoordinator.substring(0, 6)}... (was I coordinator: ${wasCoordinator}, am I now: ${this.isCoordinator})`
       );
+      console.log(`[Coordinator] Firing callback: isNowCoordinator=${this.isCoordinator}`);
 
       this.onCoordinatorChanged?.({
         coordinatorId: this.coordinatorId,
@@ -177,7 +183,10 @@ export class PeerCoordinator {
       } else {
         this.stopCoordinatorHeartbeat();
       }
+    } else {
+      console.log(`[Coordinator] No change needed: current=${this.coordinatorId?.substring(0, 6)}, new=${newCoordinator.substring(0, 6)}`);
     }
+
   }
 
   startCoordinatorHeartbeat() {
@@ -220,8 +229,10 @@ export class PeerCoordinator {
         isAlive: true,
         lastSeen: Date.now(),
       });
-      console.log(`[Coordinator] Registered peer: ${peerId.substring(0, 6)}...`);
+      console.log(`[Coordinator] Registered peer: ${peerId.substring(0, 6)}... (total known: ${this.knownPeers.size})`);
       // Do not re-elect on registration; coordinator is sticky once chosen
+    } else {
+      console.log(`[Coordinator] Peer already known: ${peerId.substring(0, 6)}...`);
     }
   }
 
