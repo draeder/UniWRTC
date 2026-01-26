@@ -5,11 +5,12 @@ export default defineConfig({
   resolve: {
     alias: {
       buffer: 'buffer',
-      events: 'events'
+      events: 'events',
+      process: 'process/browser'
     }
   },
   optimizeDeps: {
-    include: ['bittorrent-tracker', 'simple-peer', 'buffer', 'events']
+    include: ['bittorrent-tracker', 'simple-peer', 'buffer', 'events', 'process']
   },
   build: {
     outDir: 'dist',

@@ -10,10 +10,21 @@
 import Gun from 'gun';
 import Client from 'bittorrent-tracker';
 import { Buffer } from 'buffer';
+import process from 'process';
 
 // Ensure Buffer exists in browser
 if (!globalThis.Buffer) {
   globalThis.Buffer = Buffer;
+}
+
+// Ensure process exists in browser for tracker libs
+if (!globalThis.process) {
+  globalThis.process = process;
+}
+
+// Ensure global alias for some deps
+if (!globalThis.global) {
+  globalThis.global = globalThis;
 }
 
 export class HybridSignaling {
