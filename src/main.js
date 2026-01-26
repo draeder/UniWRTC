@@ -158,6 +158,13 @@ roomInput.addEventListener('input', () => {
     document.getElementById('sessionId').textContent = roomInput.value.trim() || 'Not joined';
 });
 
+// Force encryption toggle to default ON on load
+const encryptionCheckbox = document.getElementById('encryptionToggle');
+if (encryptionCheckbox) {
+    encryptionCheckbox.checked = true;
+    encryptionEnabled = true;
+}
+
 // ICE servers: STUN-only by default (no TURN). For deterministic local testing,
 // support host-only ICE via URL flag: ?ice=host (or ?ice=none)
 const iceMode = (params.get('ice') || '').toLowerCase();
@@ -283,13 +290,6 @@ function isPoliteFor(peerId) {
     // In perfect negotiation, one side is "polite" (will accept/repair collisions)
     return !shouldInitiateWith(peerId);
 }
-
-window.toggleEncryption = function() {
-    const checkbox = document.getElementById('encryptionToggle');
-    encryptionEnabled = checkbox.checked;
-    const status = encryptionEnabled ? 'enabled' : 'disabled';
-    log(`Signaling encryption ${status}`, encryptionEnabled ? 'success' : 'info');
-};
 
 async function sendSignal(to, payload) {
     if (!nostrClient) throw new Error('Not connected to Nostr');
