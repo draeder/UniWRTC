@@ -56,7 +56,9 @@ export class HybridSignaling {
     }
     try {
       const infoHash = this.createInfoHashBuffer(this.roomId);
-      const peerId = Buffer.from(this.peerId.substring(0, 20).padEnd(20, '0'));
+      // Use hex public key truncated to 20 bytes (40 hex chars) as tracker peerId
+      const peerIdHex = (this.peerId || '').replace(/^0x/, '').padEnd(40, '0').slice(0, 40);
+      const peerId = Buffer.from(peerIdHex, 'hex');
 
       this.trackerClient = new Client({
         infoHash,
@@ -71,12 +73,14 @@ export class HybridSignaling {
       });
 
       this.trackerClient.on('peer', (peer) => {
-        const peerIdHex = peer.id?.toString('hex') || peer.id || '';
-        if (!peerIdHex || peerIdHex === this.peerId) return;
-        if (this.discoveredPeers.has(peerIdHex)) return;
-        this.discoveredPeers.add(peerIdHex);
-        console.log('[Tracker] Discovered peer:', peerIdHex.substring(0, 8));
-        this.onPeerDiscovered({ source: 'tracker', peerId: peerIdHex, peer });
+        const discoveredHex = peer.id?.toString('hex') || peer.id || '';
+        if (!discoveredHex) return;
+        // Avoid self
+        if (discoveredHex === peerIdHex) return;
+        if (this.discoveredPeers.has(discoveredHex)) return;
+        this.discoveredPeers.add(discoveredHex);
+        console.log('[Tracker] Discovered peer:', discoveredHex.substring(0, 8));
+        this.onPeerDiscovered({ source: 'tracker', peerId: discoveredHex, peer });
       });
 
       this.trackerClient.on('warning', (err) => {
