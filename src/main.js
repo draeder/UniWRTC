@@ -80,15 +80,15 @@ document.getElementById('app').innerHTML = `
                     <input type="text" id="roomId" data-testid="roomId" placeholder="my-room">
                 </div>
             </div>
-            <div style="display: flex; gap: 10px; align-items: center;">
-                <button onclick="window.connect()" class="btn-primary" id="connectBtn" data-testid="connectBtn">Connect</button>
-                <button onclick="window.disconnect()" class="btn-danger" id="disconnectBtn" data-testid="disconnectBtn" disabled>Disconnect</button>
-                <span id="statusBadge" data-testid="statusBadge" class="status-badge status-disconnected">Disconnected</span>
-            </div>
-            <div style="display: flex; gap: 10px; align-items: center; margin-top: 10px;">
-                <label style="display: flex; align-items: center; gap: 5px; color: #64748b; font-size: 13px;">
-                    <input type="checkbox" id="encryptionToggle" onchange="window.toggleEncryption()" checked style="cursor: pointer;">
-                    Encrypt Signaling
+            <div style="display: flex; gap: 10px; align-items: center; justify-content: space-between;">
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <button onclick="window.connect()" class="btn-primary" id="connectBtn" data-testid="connectBtn">Connect</button>
+                    <button onclick="window.disconnect()" class="btn-danger" id="disconnectBtn" data-testid="disconnectBtn" disabled>Disconnect</button>
+                    <span id="statusBadge" data-testid="statusBadge" class="status-badge status-disconnected">Disconnected</span>
+                </div>
+                <label style="display: flex; align-items: center; gap: 8px; color: #64748b; font-size: 13px; white-space: nowrap;">
+                    <input type="checkbox" id="encryptionToggle" onchange="window.toggleEncryption()" checked style="cursor: pointer; width: 16px; height: 16px;">
+                    Encrypt
                 </label>
             </div>
         </div>
@@ -326,11 +326,10 @@ async function sendSignal(to, payload) {
     if (encryptionEnabled && to && myKeyPair) {
         try {
             const recipientPublicKey = getPeerPublicKey(to);
-            if (!recipientPublicKey) {
-                console.warn('[Crypto] No public key for recipient, sending unencrypted:', to.substring(0, 6));
-            } else {
+            if (recipientPublicKey) {
                 finalPayload = await wrapEncryptedPayload(finalPayload, recipientPublicKey);
             }
+            // Silently fall back to unencrypted if no peer key yet - will be available from their hello
         } catch (e) {
             console.warn('[Crypto] Encryption failed, sending unencrypted:', e?.message);
         }
@@ -354,11 +353,10 @@ async function sendSignalToSession(to, payload, toSession) {
     if (encryptionEnabled && to && myKeyPair) {
         try {
             const recipientPublicKey = getPeerPublicKey(to);
-            if (!recipientPublicKey) {
-                console.warn('[Crypto] No public key for recipient, sending unencrypted:', to.substring(0, 6));
-            } else {
+            if (recipientPublicKey) {
                 finalPayload = await wrapEncryptedPayload(finalPayload, recipientPublicKey);
             }
+            // Silently fall back to unencrypted if no peer key yet - will be available from their hello
         } catch (e) {
             console.warn('[Crypto] Encryption failed, sending unencrypted:', e?.message);
         }
@@ -379,7 +377,16 @@ async function maybeProbePeer(peerId) {
     const probeId = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     peerProbeState.set(peerId, { session, ts: Date.now(), probeId });
     try {
-        await sendSignal(peerId, { type: 'probe', probeId });
+        const probePayload = { type: 'probe', probeId };
+        // Include our encryption public key so peer can encrypt responses
+        if (encryptionEnabled && myKeyPair && myKeyPair.publicKey) {
+            try {
+                probePayload.encryptionPublicKey = JSON.stringify(myKeyPair.publicKey);
+            } catch (e) {
+                console.warn('[Crypto] Failed to serialize public key for probe:', e?.message);
+            }
+        }
+        await sendSignal(peerId, probePayload);
         log(`Probing peer ${peerId.substring(0, 6)}...`, 'info');
     } catch (e) {
         log(`Probe failed: ${e?.message || e}`, 'warning');
@@ -719,6 +726,16 @@ async function connectNostr() {
                     if (!last || !last.probeId || !payload.probeId || payload.probeId !== last.probeId) {
                         logDrop(peerId, payload, 'probeId mismatch');
                         return;
+                    }
+                    // Extract peer's encryption public key from probe-ack if included
+                    if (encryptionEnabled && payload.encryptionPublicKey) {
+                        try {
+                            const publicKeyObj = JSON.parse(payload.encryptionPublicKey);
+                            registerPeerPublicKey(peerId, publicKeyObj);
+                            console.log('[Crypto] Registered peer encryption key from probe-ack:', peerId.substring(0, 6));
+                        } catch (e) {
+                            console.warn('[Crypto] Failed to parse peer public key from probe-ack:', e?.message);
+                        }
                     }
                     // Peer session can legitimately rotate between hello/probe/ack (reloads, relay history).
                     // Since this message is already targeted to our toSession, accept it and update our view.
