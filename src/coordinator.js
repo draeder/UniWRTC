@@ -11,7 +11,7 @@
  */
 
 export class PeerCoordinator {
-  constructor({ myPeerId, room, sendSignal, nostrClient }) {
+  constructor({ myPeerId, room, sendSignal, nostrClient, onSendCoordinatorMessage }) {
     if (!myPeerId) throw new Error('myPeerId is required');
     if (!room) throw new Error('room is required');
     if (!sendSignal) throw new Error('sendSignal is required');
@@ -21,6 +21,7 @@ export class PeerCoordinator {
     this.room = room;
     this.sendSignal = sendSignal;
     this.nostrClient = nostrClient;
+    this.onSendCoordinatorMessage = onSendCoordinatorMessage; // Callback to send via WebRTC
 
     this.isCoordinator = false;
     this.coordinatorId = null;
@@ -67,24 +68,15 @@ export class PeerCoordinator {
 
   /**
    * Announce presence and eligibility as coordinator candidate
+   * NOTE: Now disabled - coordinator messages go via WebRTC data channels, not Nostr
    */
   announcePresence() {
-    if (this.electionAnnounced) return;
-    this.electionAnnounced = true;
-
-    console.log('[Coordinator] Announcing candidacy:', this.myPeerId.substring(0, 6) + '...');
-
-    try {
-      this.sendSignal(null, {
-        type: 'coordinator-candidate',
-        role: 'coordinator',
-        candidateId: this.myPeerId,
-        joinedAt: Date.now(),
-        timestamp: Date.now(),
-      });
-    } catch (e) {
-      console.warn('[Coordinator] Failed to announce candidacy:', e?.message);
-    }
+    // Disabled: coordinator candidate/heartbeat messages should go via WebRTC, not broadcast on Nostr
+    // if (this.electionAnnounced) return;
+    // this.electionAnnounced = true;
+    // try {
+    //   this.sendSignal(null, { ... });
+    // } catch (e) { ... }
   }
 
   /**
@@ -193,17 +185,19 @@ export class PeerCoordinator {
     if (!this.isCoordinator) return;
     this.stopCoordinatorHeartbeat();
 
-    console.log('[Coordinator] Starting heartbeat');
+    console.log('[Coordinator] Starting heartbeat (via WebRTC data channels)');
 
     this.coordinatorHeartbeatTimer = setInterval(() => {
       try {
-        this.sendSignal(null, {
+        const heartbeatMsg = {
           type: 'coordinator-heartbeat',
           role: 'coordinator',
           coordinatorId: this.myPeerId,
           timestamp: Date.now(),
           knownPeers: Array.from(this.knownPeers.keys()),
-        });
+        };
+        // Send via WebRTC data channels to all connected peers
+        this.onSendCoordinatorMessage?.(heartbeatMsg);
         // Update own lastSeen since relay doesn't echo back our own messages
         this.updatePeerHeartbeat(this.myPeerId);
       } catch (e) {

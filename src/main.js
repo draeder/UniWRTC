@@ -820,11 +820,25 @@ async function connectNostr() {
 
         nostrClient = selected.client;
         if (COORD_ON) {
+            // Function to send coordinator messages via WebRTC data channels
+            const sendCoordinatorMessageViaWebRTC = (message) => {
+                for (const [peerId, dc] of dataChannels.entries()) {
+                    if (dc && dc.readyState === 'open') {
+                        try {
+                            dc.send(JSON.stringify(message));
+                        } catch (e) {
+                            console.warn(`Failed to send coordinator message to ${peerId}:`, e?.message);
+                        }
+                    }
+                }
+            };
+
             coordinator = new PeerCoordinator({
                 myPeerId,
                 room: effectiveRoom,
                 sendSignal,
                 nostrClient,
+                onSendCoordinatorMessage: sendCoordinatorMessageViaWebRTC,
             });
             coordinator.onCoordinatorChanged = ({ isNowCoordinator }) => {
                 updateRole(isNowCoordinator ? 'coordinator' : 'peer');
@@ -1112,7 +1126,30 @@ function setupDataChannel(peerId, dataChannel) {
     };
 
     dataChannel.onmessage = (event) => {
-        displayChatMessage(event.data, `${peerId.substring(0, 6)}...`, false);
+        let message;
+        try {
+            message = JSON.parse(event.data);
+        } catch {
+            // Treat as plain text chat message
+            displayChatMessage(event.data, `${peerId.substring(0, 6)}...`, false);
+            return;
+        }
+
+        // Handle coordinator messages
+        if (message && message.type === 'coordinator-heartbeat' && coordinator) {
+            console.log(`[Coordinator] Received heartbeat via WebRTC from ${peerId.substring(0, 6)}...`);
+            coordinator.handleCoordinatorMessage(message);
+            return;
+        }
+
+        if (message && message.type === 'coordinator-candidate' && coordinator) {
+            console.log(`[Coordinator] Received candidate via WebRTC from ${peerId.substring(0, 6)}...`);
+            coordinator.handleCoordinatorMessage(message);
+            return;
+        }
+
+        // Treat as chat message
+        displayChatMessage(JSON.stringify(message), `${peerId.substring(0, 6)}...`, false);
     };
 
     dataChannel.onclose = () => {
