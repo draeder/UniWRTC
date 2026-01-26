@@ -1330,16 +1330,28 @@ window.sendChatMessage = function() {
 
     // Send to all connected peers
     let sent = 0;
-    dataChannels.forEach((dc) => {
+    
+    // Send via WebRTC data channels (Nostr signaling)
+    dataChannels.forEach((dc, peerId) => {
         if (dc.readyState === 'open') {
-            dc.send(message);
-            sent++;
+            try {
+                dc.send(message);
+                sent++;
+            } catch (err) {
+                console.warn('[Chat] Failed to send via datachannel to', peerId.substring(0, 6), err);
+            }
         }
     });
-    trackerPeers.forEach((sp) => {
+    
+    // Send via tracker peers (simple-peer)
+    trackerPeers.forEach((sp, peerId) => {
         if (sp && sp.connected) {
-            sp.send(message);
-            sent++;
+            try {
+                sp.send(message);
+                sent++;
+            } catch (err) {
+                console.warn('[Chat] Failed to send via tracker to', peerId.substring(0, 6), err);
+            }
         }
     });
 
@@ -1371,9 +1383,16 @@ function displayChatMessage(message, sender, isLocal) {
 }
 
 function attachTrackerPeer(peerId, peer) {
-    if (!peer || trackerPeers.has(peerId)) return;
+    if (!peer) return;
+    
+    // Avoid attaching same peer multiple times (memory leak)
+    if (trackerPeers.has(peerId)) {
+        console.log('[Tracker] Peer already attached:', peerId.substring(0, 8));
+        return;
+    }
 
     trackerPeers.set(peerId, peer);
+    log(`Attaching tracker peer: ${peerId.substring(0, 6)}...`, 'info');
 
     peer.on('connect', () => {
         log(`Tracker peer connected: ${peerId.substring(0, 6)}...`, 'success');
