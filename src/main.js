@@ -132,6 +132,16 @@ document.getElementById('app').innerHTML = `
     </div>
 `;
 
+// FORCE ENCRYPTION DEFAULT ON IMMEDIATELY AFTER HTML IS CREATED
+const encryptCb = document.getElementById('encryptionToggle');
+if (encryptCb) {
+    console.log('[ENCRYPTION] Found checkbox, forcing ON');
+    encryptCb.defaultChecked = true;
+    encryptCb.checked = true;
+    encryptionEnabled = true;
+    console.log('[ENCRYPTION] Set encryptionEnabled=true, checkbox.checked=' + encryptCb.checked);
+}
+
 // Prefill room input from URL (?room= or ?session=); otherwise set a visible default the user can override
 const roomInput = document.getElementById('roomId');
 const params = new URLSearchParams(window.location.search);
@@ -1051,21 +1061,7 @@ window.toggleEncryption = function() {
     log(`Signaling encryption ${status}`, 'info');
 };
 
-// Ensure encryption is defaulted ON after load and visibly logged
-window.addEventListener('load', () => {
-    console.log('[ENCRYPTION-INIT] Page load handler fired');
-    const cb = document.getElementById('encryptionToggle');
-    console.log('[ENCRYPTION-INIT] Checkbox element:', cb);
-    if (cb) {
-        cb.defaultChecked = true;
-        cb.checked = true;
-        encryptionEnabled = true;
-        console.log('[ENCRYPTION-INIT] Set encryptionEnabled=true, checkbox.checked=', cb.checked);
-        log('Signaling encryption defaulted to ON', 'success');
-        window.toggleEncryption();
-        console.log('[ENCRYPTION-INIT] Called toggleEncryption()');
-    }
-});
+// REMOVED: load handler was firing before HTML existed
 
 async function createPeerConnection(peerId, shouldInitiate) {
     if (peerConnections.has(peerId)) {
