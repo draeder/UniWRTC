@@ -516,103 +516,113 @@ async function flushPendingIce(peerId) {
 }
 
 async function connectNostr() {
-    const relayUrlRaw = document.getElementById('relayUrl').value.trim();
     const roomIdInput = document.getElementById('roomId');
     const roomId = roomIdInput.value.trim();
+    
+    // Check which signaling methods are enabled
+    nostrEnabled = document.getElementById('nostrToggle')?.checked ?? true;
+    trackerEnabled = document.getElementById('trackerToggle')?.checked ?? true;
+    gunEnabled = document.getElementById('gunToggle')?.checked ?? true;
 
-    if (!relayUrlRaw) {
-        log('Please enter a relay URL', 'error');
+    if (!nostrEnabled && !trackerEnabled && !gunEnabled) {
+        log('Please enable at least one signaling method', 'error');
         return;
     }
-    
-    const relayCandidatesRaw = relayUrlRaw.toLowerCase() === 'auto'
-        ? DEFAULT_RELAYS
-        : Array.from(
-            new Set(
-                relayUrlRaw
-                    .split(/[\s,]+/)
-                    .map((s) => s.trim())
-                    .filter(Boolean)
-            )
-        );
-
-    const relayCandidates = relayCandidatesRaw.length ? relayCandidatesRaw : DEFAULT_RELAYS;
 
     const effectiveRoom = roomId || `room-${Math.random().toString(36).substring(2, 10)}`;
     if (!roomId) roomIdInput.value = effectiveRoom;
 
+    // Generate identity for all methods
+    myPeerId = myPeerId || ensureIdentity();
+    document.getElementById('clientId').textContent = myPeerId.substring(0, 16) + '...';
+    document.getElementById('sessionId').textContent = effectiveRoom;
+
     try {
-        log(`Connecting to Nostr relay...`, 'info');
-
-        if (nostrClient) {
-            await nostrClient.disconnect();
-            nostrClient = null;
-        }
-
-        // Preserve session across relay reconnects to avoid breaking existing signaling.
-        // Only reset on true disconnect (Disconnect button), not on relay failures.
-        myPeerId = myPeerId || ensureIdentity();
-        // NOTE: Do NOT reset mySessionNonce here. Keep it stable across relay changes.
-        // If no session exists yet, it will be created below.
-        peerSessions.clear();
-        peerProbeState.clear();
-        readyPeers.clear();
-        pendingIce.clear();
-        peerConnections.forEach((pc) => {
-            if (pc instanceof RTCPeerConnection) pc.close();
-        });
-        peerConnections.clear();
-        dataChannels.clear();
-        updatePeerList();
-
-        const wireHandlers = (client) => {
-            client.__handlers = {
-                onState: (state) => {
-                    if (state === 'connected') updateStatus(true);
-                    if (state === 'disconnected') updateStatus(false);
-                },
-                onNotice: (notice) => {
-                    log(`Relay NOTICE: ${String(notice)}`, 'warning');
-                },
-                onOk: ({ id, ok, message }) => {
-                    if (ok === false) log(`Relay rejected event ${String(id).slice(0, 8)}...: ${String(message)}`, 'error');
-                },
-            };
-        };
-
-        // Try relays async (in small parallel batches) and pick the first that accepts publishes.
-        const relayBatchSize = 3;
-        let lastError = null;
-        let selected = null;
-
-        // Identity must be ready before we connect/subscribe; inbound events can arrive immediately.
-        // Any client instance will derive the same per-tab keypair.
-        const myPubkey = myPeerId || ensureIdentity();
-        myPeerId = myPubkey;
-        
-        // Generate unsea key pair for encryption (once per connection, defaults to enabled)
-        if (!myKeyPair) {
-            try {
-                myKeyPair = await generateRandomPair();
-                console.log('[Crypto] Generated unsea key pair for peer', myPeerId.substring(0, 6));
-            } catch (e) {
-                console.warn('[Crypto] Failed to generate key pair:', e?.message);
+        // Only connect to Nostr if enabled
+        if (nostrEnabled) {
+            const relayUrlRaw = document.getElementById('relayUrl').value.trim();
+            
+            if (!relayUrlRaw) {
+                log('Please enter a relay URL for Nostr', 'error');
+                return;
             }
-        }
-        
-        // Generate session nonce only once per connect session (preserve across relay changes)
-        if (!mySessionNonce) {
-            mySessionNonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
-        }
-        document.getElementById('clientId').textContent = myPubkey.substring(0, 16) + '...';
-        document.getElementById('sessionId').textContent = effectiveRoom;
+            
+            const relayCandidatesRaw = relayUrlRaw.toLowerCase() === 'auto'
+                ? DEFAULT_RELAYS
+                : Array.from(
+                    new Set(
+                        relayUrlRaw
+                            .split(/[\s,]+/)
+                            .map((s) => s.trim())
+                            .filter(Boolean)
+                    )
+                );
 
-        const makeClient = (relayUrl) => createNostrClient({
-            relayUrl,
-            room: effectiveRoom,
-            secretKeyHex: mySecretKeyHex,
-            onState: (state) => {
-                if (state === 'connected') {
+            const relayCandidates = relayCandidatesRaw.length ? relayCandidatesRaw : DEFAULT_RELAYS;
+
+            log(`Connecting to Nostr relay...`, 'info');
+
+            if (nostrClient) {
+                await nostrClient.disconnect();
+                nostrClient = null;
+            }
+
+            // Preserve session across relay reconnects to avoid breaking existing signaling.
+            // Only reset on true disconnect (Disconnect button), not on relay failures.
+            // NOTE: Do NOT reset mySessionNonce here. Keep it stable across relay changes.
+            // If no session exists yet, it will be created below.
+            peerSessions.clear();
+            peerProbeState.clear();
+            readyPeers.clear();
+            pendingIce.clear();
+            peerConnections.forEach((pc) => {
+                if (pc instanceof RTCPeerConnection) pc.close();
+            });
+            peerConnections.clear();
+            dataChannels.clear();
+            updatePeerList();
+
+            const wireHandlers = (client) => {
+                client.__handlers = {
+                    onState: (state) => {
+                        if (state === 'connected') updateStatus(true);
+                        if (state === 'disconnected') updateStatus(false);
+                    },
+                    onNotice: (notice) => {
+                        log(`Relay NOTICE: ${String(notice)}`, 'warning');
+                    },
+                    onOk: ({ id, ok, message }) => {
+                        if (ok === false) log(`Relay rejected event ${String(id).slice(0, 8)}...: ${String(message)}`, 'error');
+                    },
+                };
+            };
+
+            // Try relays async (in small parallel batches) and pick the first that accepts publishes.
+            const relayBatchSize = 3;
+            let lastError = null;
+            let selected = null;
+            
+            // Generate unsea key pair for encryption (once per connection, defaults to enabled)
+            if (!myKeyPair) {
+                try {
+                    myKeyPair = await generateRandomPair();
+                    console.log('[Crypto] Generated unsea key pair for peer', myPeerId.substring(0, 6));
+                } catch (e) {
+                    console.warn('[Crypto] Failed to generate key pair:', e?.message);
+                }
+            }
+            
+            // Generate session nonce only once per connect session (preserve across relay changes)
+            if (!mySessionNonce) {
+                mySessionNonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+            }
+
+            const makeClient = (relayUrl) => createNostrClient({
+                relayUrl,
+                room: effectiveRoom,
+                secretKeyHex: mySecretKeyHex,
+                onState: (state) => {
+                    if (state === 'connected') {
                     updateStatus(true);
                 }
                 if (state === 'disconnected') {
@@ -870,58 +880,71 @@ async function connectNostr() {
             },
         });
 
-        const tryOneRelay = async (relayUrl) => {
-            const candidateClient = makeClient(relayUrl);
-            await candidateClient.connect();
-            const ok = await candidateClient.sendWithOk({ type: 'relay-check', session: mySessionNonce }, { timeoutMs: 3500 });
-            if (ok.ok !== true) throw new Error(ok.message || 'Relay rejected publish');
-            return { relayUrl, client: candidateClient };
-        };
+            const tryOneRelay = async (relayUrl) => {
+                const candidateClient = makeClient(relayUrl);
+                await candidateClient.connect();
+                const ok = await candidateClient.sendWithOk({ type: 'relay-check', session: mySessionNonce }, { timeoutMs: 3500 });
+                if (ok.ok !== true) throw new Error(ok.message || 'Relay rejected publish');
+                return { relayUrl, client: candidateClient };
+            };
 
-        for (let i = 0; i < relayCandidates.length && !selected; i += relayBatchSize) {
-            const batch = relayCandidates.slice(i, i + relayBatchSize);
-            batch.forEach((u) => log(`Trying relay: ${u}`, 'info'));
+            for (let i = 0; i < relayCandidates.length && !selected; i += relayBatchSize) {
+                const batch = relayCandidates.slice(i, i + relayBatchSize);
+                batch.forEach((u) => log(`Trying relay: ${u}`, 'info'));
 
-            const clientsInBatch = new Map();
-            const attempts = batch.map((relayUrl) => (async () => {
-                const result = await tryOneRelay(relayUrl);
-                clientsInBatch.set(relayUrl, result.client);
-                return result;
-            })());
+                const clientsInBatch = new Map();
+                const attempts = batch.map((relayUrl) => (async () => {
+                    const result = await tryOneRelay(relayUrl);
+                    clientsInBatch.set(relayUrl, result.client);
+                    return result;
+                })());
 
-            try {
-                selected = await Promise.any(attempts);
-            } catch (e) {
-                lastError = e;
-            } finally {
-                // Close any batch clients that were created but not selected.
-                for (const [url, c] of clientsInBatch.entries()) {
-                    if (selected && selected.relayUrl === url) continue;
-                    try {
-                        await c.disconnect();
-                    } catch {
-                        // ignore
+                try {
+                    selected = await Promise.any(attempts);
+                } catch (e) {
+                    lastError = e;
+                } finally {
+                    // Close any batch clients that were created but not selected.
+                    for (const [url, c] of clientsInBatch.entries()) {
+                        if (selected && selected.relayUrl === url) continue;
+                        try {
+                            await c.disconnect();
+                        } catch {
+                            // ignore
+                        }
                     }
                 }
             }
-        }
 
-        if (!selected) {
-            throw lastError || new Error('No relay candidates available');
-        }
+            if (!selected) {
+                throw lastError || new Error('No relay candidates available');
+            }
 
-        nostrClient = selected.client;
-        document.getElementById('relayUrl').value = selected.relayUrl;
-        log(`Selected relay: ${selected.relayUrl}`, 'success');
+            nostrClient = selected.client;
+            document.getElementById('relayUrl').value = selected.relayUrl;
+            log(`Selected relay: ${selected.relayUrl}`, 'success');
+            log(`Joined Nostr room: ${effectiveRoom}`, 'success');
+            
+            // Send hello via Nostr
+            const helloPayload = { type: 'hello', session: mySessionNonce };
+            if (encryptionEnabled && myKeyPair && myKeyPair.publicKey) {
+                try {
+                    helloPayload.encryptionPublicKey = JSON.stringify(myKeyPair.publicKey);
+                    console.log('[Crypto] Including public key in hello message');
+                } catch (e) {
+                    console.warn('[Crypto] Failed to serialize public key:', e?.message);
+                }
+            }
+            await nostrClient.send(helloPayload);
 
-        log(`Joined Nostr room: ${effectiveRoom}`, 'success');
+            // Kick any peers we saw while selecting relays.
+            for (const peerId of deferredHelloPeers) {
+                await maybeProbePeer(peerId);
+            }
+            deferredHelloPeers.clear();
+        } // End of Nostr connection block
 
-        // Read checkbox states
-        nostrEnabled = document.getElementById('nostrToggle')?.checked ?? true;
-        trackerEnabled = document.getElementById('trackerToggle')?.checked ?? true;
-        gunEnabled = document.getElementById('gunToggle')?.checked ?? true;
-
-        // Initialize hybrid signaling (Tracker + Gun)
+        // Initialize hybrid signaling (Tracker + Gun) - always runs regardless of Nostr
         if (hybridSignaling) {
             hybridSignaling.shutdown();
         }
@@ -974,39 +997,17 @@ async function connectNostr() {
                     'https://gun-us.herokuapp.com/gun'
                 ]);
             }
-            
-            const enabled = [];
-            if (nostrEnabled) enabled.push('Nostr');
-            if (trackerEnabled) enabled.push('Tracker');
-            if (gunEnabled) enabled.push('Gun');
-            log(`Signaling active: ${enabled.join(' + ')}`, 'success');
-        } else if (nostrEnabled) {
-            log('Signaling active: Nostr only', 'success');
         }
         
-        // Include unsea public key in hello if encryption is enabled
-        if (nostrEnabled) {
-            const helloPayload = { type: 'hello', session: mySessionNonce };
-            if (encryptionEnabled && myKeyPair && myKeyPair.publicKey) {
-                try {
-                    helloPayload.encryptionPublicKey = JSON.stringify(myKeyPair.publicKey);
-                    console.log('[Crypto] Including public key in hello message');
-                } catch (e) {
-                    console.warn('[Crypto] Failed to serialize public key:', e?.message);
-                }
-            }
-            await nostrClient.send(helloPayload);
-
-            // Kick any peers we saw while selecting relays.
-            for (const peerId of deferredHelloPeers) {
-                await maybeProbePeer(peerId);
-            }
-            deferredHelloPeers.clear();
-        }
+        // Report which methods are active
+        const enabled = [];
+        if (nostrEnabled) enabled.push('Nostr');
+        if (trackerEnabled) enabled.push('Tracker');
+        if (gunEnabled) enabled.push('Gun');
+        log(`Signaling active: ${enabled.join(' + ')}`, 'success');
         
         updateStatus(true);
-
-        log('Nostr connection established', 'success');
+        log('Connection established', 'success');
     } catch (error) {
         log(`Nostr connection error: ${error.message}`, 'error');
         updateStatus(false);
