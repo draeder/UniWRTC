@@ -1,17 +1,19 @@
 import './style.css';
 import UniWRTCClient from '../client-browser.js';
 import { createNostrClient } from './nostr/nostrClient.js';
-import { PeerCoordinator } from './coordinator.js';
 import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
+import { wrapEncryptedPayload, unwrapEncryptedPayload, deriveSharedSecret, registerPeerPublicKey, getPeerPublicKey } from './crypto.js';
+import { generateRandomPair } from 'unsea';
 
 // Make UniWRTCClient available globally for backwards compatibility
 window.UniWRTCClient = UniWRTCClient;
 
 // Nostr is the default transport (no toggle)
 let nostrClient = null;
-let coordinator = null;
 let myPeerId = null;
 let mySessionNonce = null;
+let encryptionEnabled = false; // Encryption toggle
+let myKeyPair = null; // unsea key pair for encryption { publicKey, privateKey }
 const peerSessions = new Map();
 const peerProbeState = new Map();
 const peerResyncState = new Map();
@@ -82,6 +84,10 @@ document.getElementById('app').innerHTML = `
                 <button onclick="window.connect()" class="btn-primary" id="connectBtn" data-testid="connectBtn">Connect</button>
                 <button onclick="window.disconnect()" class="btn-danger" id="disconnectBtn" data-testid="disconnectBtn" disabled>Disconnect</button>
                 <span id="statusBadge" data-testid="statusBadge" class="status-badge status-disconnected">Disconnected</span>
+                <label style="margin-left: auto; display: flex; align-items: center; gap: 5px; color: #64748b; font-size: 13px;">
+                    <input type="checkbox" id="encryptionToggle" onchange="window.toggleEncryption()" style="cursor: pointer;">
+                    Encrypt Signaling
+                </label>
             </div>
         </div>
 
@@ -97,11 +103,6 @@ document.getElementById('app').innerHTML = `
                     <div id="sessionId" data-testid="sessionId" style="font-family: monospace; color: #333; margin-top: 5px;">Not joined</div>
                 </div>
             </div>
-        </div>
-
-        <div class="card">
-            <h2>Role</h2>
-            <div id="roleBadge" data-testid="roleBadge" class="status-badge status-disconnected">Not assigned</div>
         </div>
 
         <div class="card">
@@ -135,8 +136,6 @@ document.getElementById('app').innerHTML = `
 const roomInput = document.getElementById('roomId');
 const params = new URLSearchParams(window.location.search);
 const urlRoom = params.get('room') || params.get('session');
-const coordinatorDisabled = ((params.get('coord') || params.get('coordinator') || '').toLowerCase());
-const COORD_ON = coordinatorDisabled !== '0' && coordinatorDisabled !== 'false' && coordinatorDisabled !== 'no';
 if (urlRoom) {
     roomInput.value = urlRoom;
     log(`Prefilled room ID from URL: ${urlRoom}`, 'info');
@@ -234,27 +233,6 @@ function updateStatus(connected) {
     }
 }
 
-function updateRole(role) {
-    const badge = document.getElementById('roleBadge');
-    if (!badge) return;
-
-    if (role === 'coordinator') {
-        badge.textContent = 'Coordinator';
-        badge.className = 'status-badge status-connected';
-        // If assigned a role, we must be connected
-        updateStatus(true);
-    } else if (role === 'peer') {
-        badge.textContent = 'Peer';
-        badge.className = 'status-badge status-info';
-        // If assigned a role, we must be connected
-        updateStatus(true);
-    } else {
-        badge.textContent = 'Not assigned';
-        badge.className = 'status-badge status-disconnected';
-        updateStatus(false);
-    }
-}
-
 function updatePeerList() {
     const peerList = document.getElementById('peerList');
     if (!peerList) return;
@@ -306,7 +284,14 @@ function isPoliteFor(peerId) {
     return !shouldInitiateWith(peerId);
 }
 
-function sendSignal(to, payload) {
+window.toggleEncryption = function() {
+    const checkbox = document.getElementById('encryptionToggle');
+    encryptionEnabled = checkbox.checked;
+    const status = encryptionEnabled ? 'enabled' : 'disabled';
+    log(`Signaling encryption ${status}`, encryptionEnabled ? 'success' : 'info');
+};
+
+async function sendSignal(to, payload) {
     if (!nostrClient) throw new Error('Not connected to Nostr');
     const type = payload?.type;
     const isBroadcast = !to;
@@ -315,23 +300,56 @@ function sendSignal(to, payload) {
 
     if (needsToSession && !toSession) throw new Error('No peer session yet');
 
-    return nostrClient.send({
+    let finalPayload = {
         ...payload,
         ...(to ? { to } : {}),
         ...(needsToSession ? { toSession } : {}),
         fromSession: mySessionNonce,
-    });
+    };
+
+    // Optionally encrypt the payload using unsea
+    if (encryptionEnabled && to && myKeyPair) {
+        try {
+            const recipientPublicKey = getPeerPublicKey(to);
+            if (!recipientPublicKey) {
+                console.warn('[Crypto] No public key for recipient, sending unencrypted:', to.substring(0, 6));
+            } else {
+                finalPayload = await wrapEncryptedPayload(finalPayload, recipientPublicKey);
+            }
+        } catch (e) {
+            console.warn('[Crypto] Encryption failed, sending unencrypted:', e?.message);
+        }
+    }
+
+    return nostrClient.send(finalPayload);
 }
 
-function sendSignalToSession(to, payload, toSession) {
+async function sendSignalToSession(to, payload, toSession) {
     if (!nostrClient) throw new Error('Not connected to Nostr');
     if (!toSession) throw new Error('toSession is required');
-    return nostrClient.send({
+    
+    let finalPayload = {
         ...payload,
         to,
         toSession,
         fromSession: mySessionNonce,
-    });
+    };
+
+    // Optionally encrypt the payload using unsea
+    if (encryptionEnabled && to && myKeyPair) {
+        try {
+            const recipientPublicKey = getPeerPublicKey(to);
+            if (!recipientPublicKey) {
+                console.warn('[Crypto] No public key for recipient, sending unencrypted:', to.substring(0, 6));
+            } else {
+                finalPayload = await wrapEncryptedPayload(finalPayload, recipientPublicKey);
+            }
+        } catch (e) {
+            console.warn('[Crypto] Encryption failed, sending unencrypted:', e?.message);
+        }
+    }
+
+    return nostrClient.send(finalPayload);
 }
 
 async function maybeProbePeer(peerId) {
@@ -530,6 +548,17 @@ async function connectNostr() {
         // Any client instance will derive the same per-tab keypair.
         const myPubkey = myPeerId || ensureIdentity();
         myPeerId = myPubkey;
+        
+        // Generate unsea key pair for encryption (once per connection)
+        if (!myKeyPair && encryptionEnabled) {
+            try {
+                myKeyPair = await generateRandomPair();
+                console.log('[Crypto] Generated unsea key pair for peer', myPeerId.substring(0, 6));
+            } catch (e) {
+                console.warn('[Crypto] Failed to generate key pair:', e?.message);
+            }
+        }
+        
         // Generate session nonce only once per connect session (preserve across relay changes)
         if (!mySessionNonce) {
             mySessionNonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -544,23 +573,9 @@ async function connectNostr() {
             onState: (state) => {
                 if (state === 'connected') {
                     updateStatus(true);
-                    coordinator?.onRelayReconnect();
                 }
                 if (state === 'disconnected') {
                     updateStatus(false);
-                    coordinator?.onRelayDisconnect();
-                    // If coordinator and no peers connected, attempt reconnect
-                    if (coordinator) {
-                        const status = coordinator.getStatus();
-                        if (status.knownPeersCount === 0) {
-                            log('All peers disconnected, attempting relay reconnect...', 'warning');
-                            setTimeout(() => {
-                                if (!nostrClient || !nostrClient.ws || nostrClient.ws.readyState !== WebSocket.OPEN) {
-                                    connectNostr().catch(e => log(`Reconnect failed: ${e.message}`, 'error'));
-                                }
-                            }, 2000);
-                        }
-                    }
                 }
             },
             onNotice: (notice) => {
@@ -573,11 +588,26 @@ async function connectNostr() {
                 const peerId = from;
                 if (!peerId || peerId === myPeerId) return;
 
-                // Coordinator: track peers and handle control-plane messages
-                coordinator?.registerPeer(peerId);
-                if (payload && (payload.type === 'coordinator-candidate' || payload.type === 'coordinator-heartbeat')) {
-                    coordinator?.handleCoordinatorMessage(payload);
+                // Try to decrypt if encrypted (using unsea)
+                let decrypted = payload;
+                if (payload && payload.encrypted && payload.content && myKeyPair && myKeyPair.privateKey) {
+                    try {
+                        const senderPublicKey = getPeerPublicKey(peerId);
+                        if (senderPublicKey) {
+                            decrypted = await unwrapEncryptedPayload(payload, senderPublicKey, myKeyPair.privateKey);
+                            console.log('[Crypto] Decrypted message from', peerId.substring(0, 6));
+                        } else {
+                            console.warn('[Crypto] No public key for sender, cannot decrypt');
+                        }
+                    } catch (e) {
+                        console.warn('[Crypto] Failed to decrypt message from', peerId.substring(0, 6), ':', e?.message);
+                        // If decryption fails, ignore the message (safety-first for encrypted content)
+                        return;
+                    }
                 }
+
+                // Use decrypted payload for all subsequent processing
+                payload = decrypted;
 
                 // Use the existing peer list UI as a simple "seen peers" list
                 if (!peerConnections.has(peerId)) {
@@ -605,6 +635,17 @@ async function connectNostr() {
 
                     if (prev && prev !== payload.session) {
                         readyPeers.delete(peerId);
+                    }
+
+                    // Extract peer's encryption public key if included
+                    if (encryptionEnabled && payload.encryptionPublicKey) {
+                        try {
+                            const publicKeyObj = JSON.parse(payload.encryptionPublicKey);
+                            registerPeerPublicKey(peerId, publicKeyObj);
+                            console.log('[Crypto] Registered peer encryption key from hello:', peerId.substring(0, 6));
+                        } catch (e) {
+                            console.warn('[Crypto] Failed to parse peer public key from hello:', e?.message);
+                        }
                     }
 
                     // We may receive peer presence while still selecting a relay.
@@ -819,40 +860,21 @@ async function connectNostr() {
         }
 
         nostrClient = selected.client;
-        if (COORD_ON) {
-            // Function to send coordinator messages via WebRTC data channels
-            const sendCoordinatorMessageViaWebRTC = (message) => {
-                for (const [peerId, dc] of dataChannels.entries()) {
-                    if (dc && dc.readyState === 'open') {
-                        try {
-                            dc.send(JSON.stringify(message));
-                        } catch (e) {
-                            console.warn(`Failed to send coordinator message to ${peerId}:`, e?.message);
-                        }
-                    }
-                }
-            };
-
-            coordinator = new PeerCoordinator({
-                myPeerId,
-                room: effectiveRoom,
-                sendSignal,
-                nostrClient,
-                onSendCoordinatorMessage: sendCoordinatorMessageViaWebRTC,
-            });
-            coordinator.onCoordinatorChanged = ({ isNowCoordinator }) => {
-                updateRole(isNowCoordinator ? 'coordinator' : 'peer');
-            };
-            await coordinator.initialize();
-            // initialize() already triggers election, just sync UI with current state
-            const status = coordinator.getStatus();
-            updateRole(status.isCoordinator ? 'coordinator' : 'peer');
-        }
         document.getElementById('relayUrl').value = selected.relayUrl;
         log(`Selected relay: ${selected.relayUrl}`, 'success');
 
         log(`Joined Nostr room: ${effectiveRoom}`, 'success');
-        await nostrClient.send({ type: 'hello', session: mySessionNonce });
+        // Include unsea public key in hello if encryption is enabled
+        const helloPayload = { type: 'hello', session: mySessionNonce };
+        if (encryptionEnabled && myKeyPair && myKeyPair.publicKey) {
+            try {
+                helloPayload.encryptionPublicKey = JSON.stringify(myKeyPair.publicKey);
+                console.log('[Crypto] Including public key in hello message');
+            } catch (e) {
+                console.warn('[Crypto] Failed to serialize public key:', e?.message);
+            }
+        }
+        await nostrClient.send(helloPayload);
 
         // Kick any peers we saw while selecting relays.
         for (const peerId of deferredHelloPeers) {
@@ -991,11 +1013,6 @@ async function connectWebRTC() {
 }
 
 window.disconnect = function() {
-    updateRole(null);
-    if (coordinator) {
-        coordinator.destroy();
-        coordinator = null;
-    }
     if (nostrClient) {
         nostrClient.disconnect().catch(() => {});
         nostrClient = null;
@@ -1021,6 +1038,14 @@ window.disconnect = function() {
         updateStatus(false);
         log('Disconnected', 'warning');
     }
+};
+
+window.toggleEncryption = function() {
+    const checkbox = document.getElementById('encryptionToggle');
+    encryptionEnabled = checkbox.checked;
+    const status = encryptionEnabled ? 'enabled' : 'disabled';
+    console.log('[Crypto] Encryption', status);
+    log(`Signaling encryption ${status}`, 'info');
 };
 
 async function createPeerConnection(peerId, shouldInitiate) {
@@ -1132,19 +1157,6 @@ function setupDataChannel(peerId, dataChannel) {
         } catch {
             // Treat as plain text chat message
             displayChatMessage(event.data, `${peerId.substring(0, 6)}...`, false);
-            return;
-        }
-
-        // Handle coordinator messages
-        if (message && message.type === 'coordinator-heartbeat' && coordinator) {
-            console.log(`[Coordinator] Received heartbeat via WebRTC from ${peerId.substring(0, 6)}...`);
-            coordinator.handleCoordinatorMessage(message);
-            return;
-        }
-
-        if (message && message.type === 'coordinator-candidate' && coordinator) {
-            console.log(`[Coordinator] Received candidate via WebRTC from ${peerId.substring(0, 6)}...`);
-            coordinator.handleCoordinatorMessage(message);
             return;
         }
 
