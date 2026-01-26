@@ -8,6 +8,13 @@
  */
 
 import Gun from 'gun';
+import Client from 'bittorrent-tracker';
+import { Buffer } from 'buffer';
+
+// Ensure Buffer exists in browser
+if (!globalThis.Buffer) {
+  globalThis.Buffer = Buffer;
+}
 
 export class HybridSignaling {
   constructor(config = {}) {
@@ -16,8 +23,8 @@ export class HybridSignaling {
     this.onPeerDiscovered = config.onPeerDiscovered || (() => {});
     this.onSignal = config.onSignal || (() => {});
     
-    // WebSocket tracker connections
-    this.trackerSockets = [];
+    // WebSocket tracker client
+    this.trackerClient = null;
     this.discoveredPeers = new Set();
     
     // Gun for alternative signaling
@@ -36,73 +43,44 @@ export class HybridSignaling {
       console.warn('[Tracker] No room ID specified');
       return;
     }
+    try {
+      const infoHash = this.createInfoHashBuffer(this.roomId);
+      const peerId = Buffer.from(this.peerId.substring(0, 20).padEnd(20, '0'));
 
-    trackers.forEach(trackerUrl => {
-      try {
-        const ws = new WebSocket(trackerUrl);
-        
-        ws.onopen = () => {
-          console.log('[Tracker] Connected to', trackerUrl);
-          
-          // Send announce message (simplified WebTorrent protocol)
-          const announce = {
-            action: 'announce',
-            info_hash: this.createInfoHashHex(this.roomId),
-            peer_id: this.peerId.substring(0, 20).padEnd(20, '0'),
-            numwant: 50,
-            uploaded: 0,
-            downloaded: 0,
-            left: 0,
-            event: 'started',
-            compact: 0
-          };
-          
-          ws.send(JSON.stringify(announce));
-        };
-        
-        ws.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            
-            if (data.offer || data.answer) {
-              // WebRTC offer/answer from tracker
-              console.log('[Tracker] Received WebRTC signal');
-              return;
-            }
-            
-            if (data.peer_id && data.peer_id !== this.peerId) {
-              const peerId = data.peer_id;
-              
-              if (!this.discoveredPeers.has(peerId)) {
-                console.log('[Tracker] Discovered peer:', peerId.substring(0, 8));
-                this.discoveredPeers.add(peerId);
-                this.onPeerDiscovered({
-                  source: 'tracker',
-                  peerId,
-                  data
-                });
-              }
-            }
-          } catch (err) {
-            console.error('[Tracker] Message parse error:', err);
-          }
-        };
-        
-        ws.onerror = (err) => {
-          console.warn('[Tracker] Error:', trackerUrl, err);
-        };
-        
-        ws.onclose = () => {
-          console.log('[Tracker] Disconnected:', trackerUrl);
-        };
-        
-        this.trackerSockets.push(ws);
-      } catch (err) {
-        console.error('[Tracker] Failed to connect:', trackerUrl, err);
-      }
-    });
+      this.trackerClient = new Client({
+        infoHash,
+        peerId,
+        announce: trackers,
+        rtcConfig: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' }
+          ]
+        }
+      });
 
-    console.log('[Tracker] Started peer discovery for room:', this.roomId);
+      this.trackerClient.on('peer', (peer) => {
+        const peerIdHex = peer.id?.toString('hex') || peer.id || '';
+        if (!peerIdHex || peerIdHex === this.peerId) return;
+        if (this.discoveredPeers.has(peerIdHex)) return;
+        this.discoveredPeers.add(peerIdHex);
+        console.log('[Tracker] Discovered peer:', peerIdHex.substring(0, 8));
+        this.onPeerDiscovered({ source: 'tracker', peerId: peerIdHex, peer });
+      });
+
+      this.trackerClient.on('warning', (err) => {
+        console.warn('[Tracker] Warning:', err?.message || err);
+      });
+
+      this.trackerClient.on('error', (err) => {
+        console.error('[Tracker] Error:', err?.message || err);
+      });
+
+      this.trackerClient.start();
+      console.log('[Tracker] Started peer discovery for room:', this.roomId);
+    } catch (err) {
+      console.error('[Tracker] Failed to start tracker client:', err);
+    }
   }
 
   /**
@@ -191,6 +169,11 @@ export class HybridSignaling {
     return hash.padEnd(40, '0').substring(0, 40);
   }
 
+  createInfoHashBuffer(roomId) {
+    const hex = this.createInfoHashHex(roomId);
+    return Buffer.from(hex, 'hex');
+  }
+
   /**
    * Update room/session
    */
@@ -219,15 +202,14 @@ export class HybridSignaling {
    * Shutdown all signaling channels
    */
   shutdown() {
-    // Close all tracker WebSockets
-    this.trackerSockets.forEach(ws => {
+    if (this.trackerClient) {
       try {
-        ws.close();
+        this.trackerClient.destroy();
       } catch (err) {
-        console.error('[Tracker] Error closing:', err);
+        console.error('[Tracker] Error closing client:', err);
       }
-    });
-    this.trackerSockets = [];
+      this.trackerClient = null;
+    }
     
     this.discoveredPeers.clear();
     this.gunPeers.clear();
