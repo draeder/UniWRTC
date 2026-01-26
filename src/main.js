@@ -1051,6 +1051,18 @@ window.toggleEncryption = function() {
     log(`Signaling encryption ${status}`, 'info');
 };
 
+// Ensure encryption is defaulted ON after load and visibly logged
+window.addEventListener('load', () => {
+    const cb = document.getElementById('encryptionToggle');
+    if (cb) {
+        cb.defaultChecked = true;
+        cb.checked = true;
+        encryptionEnabled = true;
+        log('Signaling encryption defaulted to ON', 'success');
+        window.toggleEncryption();
+    }
+});
+
 async function createPeerConnection(peerId, shouldInitiate) {
     if (peerConnections.has(peerId)) {
         const existing = peerConnections.get(peerId);
