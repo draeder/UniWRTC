@@ -161,8 +161,10 @@ roomInput.addEventListener('input', () => {
 // Force encryption toggle to default ON on load
 const encryptionCheckbox = document.getElementById('encryptionToggle');
 if (encryptionCheckbox) {
-    encryptionCheckbox.checked = true;
+    encryptionCheckbox.defaultChecked = true; // force default state
+    encryptionCheckbox.checked = true; // override any persisted form state
     encryptionEnabled = true;
+    window.toggleEncryption?.(); // ensure UI + state sync on load
 }
 
 // ICE servers: STUN-only by default (no TURN). For deterministic local testing,
