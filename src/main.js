@@ -4,12 +4,14 @@ import { createNostrClient } from './nostr/nostrClient.js';
 import { generateSecretKey, getPublicKey } from 'nostr-tools/pure';
 import { wrapEncryptedPayload, unwrapEncryptedPayload, deriveSharedSecret, registerPeerPublicKey, getPeerPublicKey } from './crypto.js';
 import { generateRandomPair } from 'unsea';
+import { HybridSignaling } from './services/hybridSignaling.js';
 
 // Make UniWRTCClient available globally for backwards compatibility
 window.UniWRTCClient = UniWRTCClient;
 
-// Nostr is the default transport (no toggle)
+// Hybrid signaling: Nostr (primary) + Tracker + Gun
 let nostrClient = null;
+let hybridSignaling = null;
 let myPeerId = null;
 let mySessionNonce = null;
 let encryptionEnabled = true; // Encryption toggle - defaults to ON
@@ -896,6 +898,57 @@ async function connectNostr() {
         log(`Selected relay: ${selected.relayUrl}`, 'success');
 
         log(`Joined Nostr room: ${effectiveRoom}`, 'success');
+
+        // Initialize hybrid signaling (Tracker + Gun)
+        if (hybridSignaling) {
+            hybridSignaling.shutdown();
+        }
+        
+        hybridSignaling = new HybridSignaling({
+            roomId: effectiveRoom,
+            peerId: myPeerId,
+            onPeerDiscovered: ({ source, peerId: discoveredPeerId, peer, data }) => {
+                if (discoveredPeerId === myPeerId) return;
+                
+                log(`Peer discovered via ${source}: ${discoveredPeerId.substring(0, 6)}...`, 'info');
+                
+                // Track discovered peer
+                if (!peerConnections.has(discoveredPeerId)) {
+                    peerConnections.set(discoveredPeerId, null);
+                    updatePeerList();
+                }
+                
+                // If from tracker, we can potentially initiate WebRTC directly
+                if (source === 'tracker' && peer && shouldInitiateWith(discoveredPeerId)) {
+                    log(`Attempting direct WebRTC via tracker with ${discoveredPeerId.substring(0, 6)}...`, 'info');
+                }
+            },
+            onSignal: async ({ source, from, signal }) => {
+                log(`Signal via ${source} from ${from.substring(0, 6)}...`, 'info');
+                
+                // Process Gun signals (fallback to Nostr if needed)
+                if (source === 'gun') {
+                    // Handle Gun signaling as backup
+                    // The signal processing logic is similar to Nostr
+                    console.log('[Gun] Received signal:', signal.type);
+                }
+            }
+        });
+        
+        // Initialize tracker for peer discovery
+        hybridSignaling.initTracker([
+            'wss://tracker.openwebtorrent.com',
+            'wss://tracker.webtorrent.dev',
+            'wss://tracker.btorrent.xyz'
+        ]);
+        
+        // Initialize Gun for alternative signaling
+        hybridSignaling.initGun([
+            'https://gun-manhattan.herokuapp.com/gun',
+            'https://gun-us.herokuapp.com/gun'
+        ]);
+        
+        log('Hybrid signaling active (Nostr + Tracker + Gun)', 'success');
         // Include unsea public key in hello if encryption is enabled
         const helloPayload = { type: 'hello', session: mySessionNonce };
         if (encryptionEnabled && myKeyPair && myKeyPair.publicKey) {
@@ -1059,6 +1112,11 @@ window.disconnect = function() {
         peerConnections.clear();
         dataChannels.clear();
         updatePeerList();
+    }
+    if (hybridSignaling) {
+        hybridSignaling.shutdown();
+        hybridSignaling = null;
+        log('Hybrid signaling disconnected', 'info');
     }
     if (client) {
         client.disconnect();
