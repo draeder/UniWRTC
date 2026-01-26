@@ -41,6 +41,7 @@ const peerConnections = new Map();
 const dataChannels = new Map();
 const pendingIce = new Map();
 const outboundIceBatches = new Map();
+const trackerPeers = new Map(); // simple-peer instances from tracker
 
 function bytesToHex(bytes) {
     return Array.from(bytes)
@@ -294,6 +295,13 @@ function updatePeerList() {
         if (connState === 'failed' || connState === 'disconnected' || connState === 'closed') continue;
 
         connectedPeerIds.push(peerId);
+    }
+
+    // Include tracker peers (simple-peer) that are connected
+    for (const [peerId, sp] of trackerPeers.entries()) {
+        if (sp && sp.connected) {
+            connectedPeerIds.push(peerId);
+        }
     }
 
     if (connectedPeerIds.length === 0) {
@@ -964,9 +972,9 @@ async function connectNostr() {
                         updatePeerList();
                     }
                     
-                    // If from tracker, we can potentially initiate WebRTC directly
-                    if (source === 'tracker' && peer && shouldInitiateWith(discoveredPeerId)) {
-                        log(`Attempting direct WebRTC via tracker with ${discoveredPeerId.substring(0, 6)}...`, 'info');
+                    // If from tracker, attach the simple-peer instance immediately
+                    if (source === 'tracker' && peer) {
+                        attachTrackerPeer(discoveredPeerId, peer);
                     }
                 },
                 onSignal: async ({ source, from, signal }) => {
@@ -1151,6 +1159,10 @@ window.disconnect = function() {
         dataChannels.clear();
         updatePeerList();
     }
+    trackerPeers.forEach((sp) => {
+        try { sp.destroy?.(); } catch {}
+    });
+    trackerPeers.clear();
     if (hybridSignaling) {
         hybridSignaling.shutdown();
         hybridSignaling = null;
@@ -1309,16 +1321,24 @@ window.sendChatMessage = function() {
         return;
     }
 
-    if (dataChannels.size === 0) {
+    const hasRtc = dataChannels.size > 0;
+    const hasTracker = trackerPeers.size > 0;
+    if (!hasRtc && !hasTracker) {
         log('No data channels yet. Open this room in another tab/browser and wait for WebRTC to connect.', 'error');
         return;
     }
 
     // Send to all connected peers
     let sent = 0;
-    dataChannels.forEach((dc, peerId) => {
+    dataChannels.forEach((dc) => {
         if (dc.readyState === 'open') {
             dc.send(message);
+            sent++;
+        }
+    });
+    trackerPeers.forEach((sp) => {
+        if (sp && sp.connected) {
+            sp.send(message);
             sent++;
         }
     });
@@ -1348,6 +1368,36 @@ function displayChatMessage(message, sender, isLocal) {
         `;
     chatContainer.appendChild(messageEl);
     chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function attachTrackerPeer(peerId, peer) {
+    if (!peer || trackerPeers.has(peerId)) return;
+
+    trackerPeers.set(peerId, peer);
+
+    peer.on('connect', () => {
+        log(`Tracker peer connected: ${peerId.substring(0, 6)}...`, 'success');
+        updatePeerList();
+    });
+
+    peer.on('data', (data) => {
+        try {
+            const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
+            displayChatMessage(text, `${peerId.substring(0, 6)}...`, false);
+        } catch {
+            // ignore decode errors
+        }
+    });
+
+    peer.on('close', () => {
+        trackerPeers.delete(peerId);
+        updatePeerList();
+        log(`Tracker peer closed: ${peerId.substring(0, 6)}...`, 'warning');
+    });
+
+    peer.on('error', (err) => {
+        log(`Tracker peer error: ${peerId.substring(0, 6)}... ${err?.message || err}`, 'warning');
+    });
 }
 
 // Initialize
