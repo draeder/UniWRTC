@@ -12,6 +12,9 @@ window.UniWRTCClient = UniWRTCClient;
 // Hybrid signaling: Nostr (primary) + Tracker + Gun
 let nostrClient = null;
 let hybridSignaling = null;
+let nostrEnabled = true;
+let trackerEnabled = true;
+let gunEnabled = true;
 let myPeerId = null;
 let mySessionNonce = null;
 let encryptionEnabled = true; // Encryption toggle - defaults to ON
@@ -82,7 +85,7 @@ document.getElementById('app').innerHTML = `
                     <input type="text" id="roomId" data-testid="roomId" placeholder="my-room">
                 </div>
             </div>
-            <div style="display: flex; gap: 10px; align-items: center; justify-content: space-between;">
+            <div style="display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 10px;">
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <button onclick="window.connect()" class="btn-primary" id="connectBtn" data-testid="connectBtn">Connect</button>
                     <button onclick="window.disconnect()" class="btn-danger" id="disconnectBtn" data-testid="disconnectBtn" disabled>Disconnect</button>
@@ -91,6 +94,20 @@ document.getElementById('app').innerHTML = `
                 <label style="display: flex; align-items: center; gap: 8px; color: #64748b; font-size: 13px; white-space: nowrap;">
                     <input type="checkbox" id="encryptionToggle" onchange="window.toggleEncryption()" checked style="cursor: pointer; width: 16px; height: 16px;">
                     Encrypt
+                </label>
+            </div>
+            <div style="display: flex; gap: 15px; padding: 10px; background: #f8fafc; border-radius: 4px; border: 1px solid #e2e8f0;">
+                <label style="display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 13px;">
+                    <input type="checkbox" id="nostrToggle" checked style="cursor: pointer; width: 16px; height: 16px;">
+                    Nostr (Primary)
+                </label>
+                <label style="display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 13px;">
+                    <input type="checkbox" id="trackerToggle" checked style="cursor: pointer; width: 16px; height: 16px;">
+                    Tracker (Peers)
+                </label>
+                <label style="display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 13px;">
+                    <input type="checkbox" id="gunToggle" checked style="cursor: pointer; width: 16px; height: 16px;">
+                    Gun (Backup)
                 </label>
             </div>
         </div>
@@ -899,73 +916,93 @@ async function connectNostr() {
 
         log(`Joined Nostr room: ${effectiveRoom}`, 'success');
 
+        // Read checkbox states
+        nostrEnabled = document.getElementById('nostrToggle')?.checked ?? true;
+        trackerEnabled = document.getElementById('trackerToggle')?.checked ?? true;
+        gunEnabled = document.getElementById('gunToggle')?.checked ?? true;
+
         // Initialize hybrid signaling (Tracker + Gun)
         if (hybridSignaling) {
             hybridSignaling.shutdown();
         }
         
-        hybridSignaling = new HybridSignaling({
-            roomId: effectiveRoom,
-            peerId: myPeerId,
-            onPeerDiscovered: ({ source, peerId: discoveredPeerId, peer, data }) => {
-                if (discoveredPeerId === myPeerId) return;
-                
-                log(`Peer discovered via ${source}: ${discoveredPeerId.substring(0, 6)}...`, 'info');
-                
-                // Track discovered peer
-                if (!peerConnections.has(discoveredPeerId)) {
-                    peerConnections.set(discoveredPeerId, null);
-                    updatePeerList();
+        if (trackerEnabled || gunEnabled) {
+            hybridSignaling = new HybridSignaling({
+                roomId: effectiveRoom,
+                peerId: myPeerId,
+                onPeerDiscovered: ({ source, peerId: discoveredPeerId, peer, data }) => {
+                    if (discoveredPeerId === myPeerId) return;
+                    
+                    log(`Peer discovered via ${source}: ${discoveredPeerId.substring(0, 6)}...`, 'info');
+                    
+                    // Track discovered peer
+                    if (!peerConnections.has(discoveredPeerId)) {
+                        peerConnections.set(discoveredPeerId, null);
+                        updatePeerList();
+                    }
+                    
+                    // If from tracker, we can potentially initiate WebRTC directly
+                    if (source === 'tracker' && peer && shouldInitiateWith(discoveredPeerId)) {
+                        log(`Attempting direct WebRTC via tracker with ${discoveredPeerId.substring(0, 6)}...`, 'info');
+                    }
+                },
+                onSignal: async ({ source, from, signal }) => {
+                    log(`Signal via ${source} from ${from.substring(0, 6)}...`, 'info');
+                    
+                    // Process Gun signals (fallback to Nostr if needed)
+                    if (source === 'gun') {
+                        // Handle Gun signaling as backup
+                        // The signal processing logic is similar to Nostr
+                        console.log('[Gun] Received signal:', signal.type);
+                    }
                 }
-                
-                // If from tracker, we can potentially initiate WebRTC directly
-                if (source === 'tracker' && peer && shouldInitiateWith(discoveredPeerId)) {
-                    log(`Attempting direct WebRTC via tracker with ${discoveredPeerId.substring(0, 6)}...`, 'info');
-                }
-            },
-            onSignal: async ({ source, from, signal }) => {
-                log(`Signal via ${source} from ${from.substring(0, 6)}...`, 'info');
-                
-                // Process Gun signals (fallback to Nostr if needed)
-                if (source === 'gun') {
-                    // Handle Gun signaling as backup
-                    // The signal processing logic is similar to Nostr
-                    console.log('[Gun] Received signal:', signal.type);
-                }
+            });
+            
+            // Initialize tracker for peer discovery (if enabled)
+            if (trackerEnabled) {
+                hybridSignaling.initTracker([
+                    'wss://tracker.openwebtorrent.com',
+                    'wss://tracker.webtorrent.dev',
+                    'wss://tracker.btorrent.xyz'
+                ]);
             }
-        });
+            
+            // Initialize Gun for alternative signaling (if enabled)
+            if (gunEnabled) {
+                hybridSignaling.initGun([
+                    'https://gun-manhattan.herokuapp.com/gun',
+                    'https://gun-us.herokuapp.com/gun'
+                ]);
+            }
+            
+            const enabled = [];
+            if (nostrEnabled) enabled.push('Nostr');
+            if (trackerEnabled) enabled.push('Tracker');
+            if (gunEnabled) enabled.push('Gun');
+            log(`Signaling active: ${enabled.join(' + ')}`, 'success');
+        } else if (nostrEnabled) {
+            log('Signaling active: Nostr only', 'success');
+        }
         
-        // Initialize tracker for peer discovery
-        hybridSignaling.initTracker([
-            'wss://tracker.openwebtorrent.com',
-            'wss://tracker.webtorrent.dev',
-            'wss://tracker.btorrent.xyz'
-        ]);
-        
-        // Initialize Gun for alternative signaling
-        hybridSignaling.initGun([
-            'https://gun-manhattan.herokuapp.com/gun',
-            'https://gun-us.herokuapp.com/gun'
-        ]);
-        
-        log('Hybrid signaling active (Nostr + Tracker + Gun)', 'success');
         // Include unsea public key in hello if encryption is enabled
-        const helloPayload = { type: 'hello', session: mySessionNonce };
-        if (encryptionEnabled && myKeyPair && myKeyPair.publicKey) {
-            try {
-                helloPayload.encryptionPublicKey = JSON.stringify(myKeyPair.publicKey);
-                console.log('[Crypto] Including public key in hello message');
-            } catch (e) {
-                console.warn('[Crypto] Failed to serialize public key:', e?.message);
+        if (nostrEnabled) {
+            const helloPayload = { type: 'hello', session: mySessionNonce };
+            if (encryptionEnabled && myKeyPair && myKeyPair.publicKey) {
+                try {
+                    helloPayload.encryptionPublicKey = JSON.stringify(myKeyPair.publicKey);
+                    console.log('[Crypto] Including public key in hello message');
+                } catch (e) {
+                    console.warn('[Crypto] Failed to serialize public key:', e?.message);
+                }
             }
-        }
-        await nostrClient.send(helloPayload);
+            await nostrClient.send(helloPayload);
 
-        // Kick any peers we saw while selecting relays.
-        for (const peerId of deferredHelloPeers) {
-            await maybeProbePeer(peerId);
+            // Kick any peers we saw while selecting relays.
+            for (const peerId of deferredHelloPeers) {
+                await maybeProbePeer(peerId);
+            }
+            deferredHelloPeers.clear();
         }
-        deferredHelloPeers.clear();
         
         updateStatus(true);
 
