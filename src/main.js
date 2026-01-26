@@ -80,10 +80,12 @@ document.getElementById('app').innerHTML = `
                     <input type="text" id="roomId" data-testid="roomId" placeholder="my-room">
                 </div>
             </div>
-            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <div style="display: flex; gap: 10px; align-items: center;">
                 <button onclick="window.connect()" class="btn-primary" id="connectBtn" data-testid="connectBtn">Connect</button>
                 <button onclick="window.disconnect()" class="btn-danger" id="disconnectBtn" data-testid="disconnectBtn" disabled>Disconnect</button>
                 <span id="statusBadge" data-testid="statusBadge" class="status-badge status-disconnected">Disconnected</span>
+            </div>
+            <div style="display: flex; gap: 10px; align-items: center; margin-top: 10px;">
                 <label style="display: flex; align-items: center; gap: 5px; color: #64748b; font-size: 13px;">
                     <input type="checkbox" id="encryptionToggle" onchange="window.toggleEncryption()" checked style="cursor: pointer;">
                     Encrypt Signaling
