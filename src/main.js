@@ -165,6 +165,7 @@ if (encryptionCheckbox) {
     encryptionCheckbox.checked = true; // override any persisted form state
     encryptionEnabled = true;
     window.toggleEncryption?.(); // ensure UI + state sync on load
+    log('Signaling encryption defaulted to ON', 'success');
 }
 
 // ICE servers: STUN-only by default (no TURN). For deterministic local testing,
