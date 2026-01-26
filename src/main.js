@@ -12,7 +12,7 @@ window.UniWRTCClient = UniWRTCClient;
 let nostrClient = null;
 let myPeerId = null;
 let mySessionNonce = null;
-let encryptionEnabled = false; // Encryption toggle
+let encryptionEnabled = true; // Encryption toggle - defaults to ON
 let myKeyPair = null; // unsea key pair for encryption { publicKey, privateKey }
 const peerSessions = new Map();
 const peerProbeState = new Map();
@@ -80,12 +80,12 @@ document.getElementById('app').innerHTML = `
                     <input type="text" id="roomId" data-testid="roomId" placeholder="my-room">
                 </div>
             </div>
-            <div style="display: flex; gap: 10px; align-items: center;">
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
                 <button onclick="window.connect()" class="btn-primary" id="connectBtn" data-testid="connectBtn">Connect</button>
                 <button onclick="window.disconnect()" class="btn-danger" id="disconnectBtn" data-testid="disconnectBtn" disabled>Disconnect</button>
                 <span id="statusBadge" data-testid="statusBadge" class="status-badge status-disconnected">Disconnected</span>
-                <label style="margin-left: auto; display: flex; align-items: center; gap: 5px; color: #64748b; font-size: 13px;">
-                    <input type="checkbox" id="encryptionToggle" onchange="window.toggleEncryption()" style="cursor: pointer;">
+                <label style="display: flex; align-items: center; gap: 5px; color: #64748b; font-size: 13px;">
+                    <input type="checkbox" id="encryptionToggle" onchange="window.toggleEncryption()" checked style="cursor: pointer;">
                     Encrypt Signaling
                 </label>
             </div>
@@ -549,8 +549,8 @@ async function connectNostr() {
         const myPubkey = myPeerId || ensureIdentity();
         myPeerId = myPubkey;
         
-        // Generate unsea key pair for encryption (once per connection)
-        if (!myKeyPair && encryptionEnabled) {
+        // Generate unsea key pair for encryption (once per connection, defaults to enabled)
+        if (!myKeyPair) {
             try {
                 myKeyPair = await generateRandomPair();
                 console.log('[Crypto] Generated unsea key pair for peer', myPeerId.substring(0, 6));
