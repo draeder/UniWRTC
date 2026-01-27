@@ -1524,6 +1524,12 @@ function setupDataChannel(peerId, dataChannel, sourceHint) {
     };
 
     dataChannel.onmessage = (event) => {
+        const preferred = peerPreferredSource.get(normalized);
+        // Only display if this is preferred source or no preference set yet
+        // (preference locks in on onopen via setPreferredSource, so this double-checks)
+        if (preferred && preferred !== 'Nostr' && preferred !== 'Gun') {
+            return; // Tracker won, ignore data channel
+        }
         displayChatMessage(event.data, `${peerId.substring(0, 6)}...`, false);
     };
 
@@ -1761,6 +1767,11 @@ function attachTrackerPeer(peerId, peer) {
     peer.on('data', (data) => {
         try {
             const normalized = peerId.trim();
+            const preferred = peerPreferredSource.get(normalized);
+            // Only display if Tracker is preferred source or no preference set yet
+            if (preferred && preferred !== 'Tracker') {
+                return; // Nostr/Gun won, ignore tracker
+            }
             const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
             displayChatMessage(text, `${peerId.substring(0, 6)}...`, false);
         } catch {
