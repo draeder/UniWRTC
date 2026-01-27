@@ -1522,9 +1522,7 @@ function setupDataChannel(peerId, dataChannel, sourceHint) {
     }
     
     dataChannel.onopen = () => {
-        log(`Data channel open with ${peerId.substring(0, 6)}...`, 'success');
         const normalized = peerId.trim();
-        rtcConnectedAt.set(normalized, Date.now());
         const lastSignal = lastSignalSource.get(normalized);
         const chosen = sourceHint || lastSignal || 'Nostr';
         const preferred = peerPreferredSource.get(normalized);
@@ -1541,6 +1539,9 @@ function setupDataChannel(peerId, dataChannel, sourceHint) {
             return;
         }
 
+        log(`Data channel open with ${peerId.substring(0, 6)}...`, 'success');
+        rtcConnectedAt.set(normalized, Date.now());
+        
         if (!peerSources.has(normalized) && chosen) {
             peerSources.set(normalized, chosen);
         }
