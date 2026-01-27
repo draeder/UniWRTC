@@ -387,7 +387,6 @@ function updatePeerList() {
     
     // Build display from ONLY peerPreferredSource - one entry per peer guaranteed
     const connectedPeers = new Map(); // peerId -> source
-    const activeSourceTypes = new Set();
 
     for (const [peerId, source] of peerPreferredSource.entries()) {
         // Check if this peer's preferred connection is actually active
@@ -409,8 +408,18 @@ function updatePeerList() {
         // Only display if currently active (will reappear if reconnects)
         if (isActive) {
             connectedPeers.set(peerId, source);
-            activeSourceTypes.add(source);
         }
+    }
+
+    // Show accurate URLs for the transports actually in use
+    const relayUrlInput = document.getElementById('relayUrl');
+    if (relayUrlInput && connectedPeers.size > 0) {
+        const activePreferredSources = new Set([...connectedPeers.values()]);
+        const urlParts = [];
+        if (activePreferredSources.has('Nostr')) urlParts.push(...DEFAULT_RELAYS);
+        if (activePreferredSources.has('Tracker')) urlParts.push(...DEFAULT_TRACKERS);
+        if (activePreferredSources.has('Gun')) urlParts.push(DEFAULT_GUN_RELAY);
+        relayUrlInput.value = urlParts.join(', ');
     }
 
     if (connectedPeers.size === 0) {
