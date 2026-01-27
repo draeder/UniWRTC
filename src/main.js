@@ -1670,6 +1670,12 @@ async function initiateGunWebRTC(peerId) {
 
 async function handleGunSignal(peerId, signal) {
     try {
+        const preferred = peerPreferredSource.get(peerId.trim());
+        if (preferred && preferred !== 'Gun') {
+            console.log(`[Gun] Ignoring signal for ${peerId.substring(0, 8)} because preferred is ${preferred}`);
+            return;
+        }
+
         if (signal.type === 'offer' && signal.sdp) {
             log(`Received Gun offer from ${peerId.substring(0, 6)}...`, 'info');
             let pc = await ensurePeerConnection(peerId);
@@ -1739,6 +1745,11 @@ function attachTrackerPeer(peerId, peer) {
             peerSources.set(peerId, chosen);
         }
         setPreferredSource(peerId, chosen);
+        const preferred = peerPreferredSource.get(peerId.trim());
+        if (preferred && preferred !== 'Tracker') {
+            try { peer.destroy?.(); } catch {}
+            trackerPeers.delete(peerId);
+        }
     });
 
     peer.on('data', (data) => {
