@@ -1569,16 +1569,14 @@ window.sendChatMessage = function() {
     }
 
     const hasRtc = dataChannels.size > 0;
-    const hasTracker = trackerPeers.size > 0;
-    if (!hasRtc && !hasTracker) {
-        log('No data channels yet. Open this room in another tab/browser and wait for WebRTC to connect.', 'error');
+    if (!hasRtc) {
+        log('No WebRTC data channels yet. Wait for peers to connect.', 'error');
         return;
     }
 
-    // Send to all connected peers
+    // Send to all connected peers via WebRTC data channels ONLY
     let sent = 0;
     
-    // Send via WebRTC data channels (Nostr signaling)
     dataChannels.forEach((dc, peerId) => {
         if (dc.readyState === 'open') {
             try {
@@ -1589,24 +1587,12 @@ window.sendChatMessage = function() {
             }
         }
     });
-    
-    // Send via tracker peers (simple-peer)
-    trackerPeers.forEach((sp, peerId) => {
-        if (sp && sp.connected) {
-            try {
-                sp.send(message);
-                sent++;
-            } catch (err) {
-                console.warn('[Chat] Failed to send via tracker to', peerId.substring(0, 6), err);
-            }
-        }
-    });
 
     if (sent > 0) {
         displayChatMessage(message, 'You', true);
         document.getElementById('chatMessage').value = '';
     } else {
-        log('No open connections to send message', 'error');
+        log('No open WebRTC connections to send message', 'error');
     }
 };
 
