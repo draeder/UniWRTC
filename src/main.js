@@ -359,7 +359,14 @@ function updateStatus(connected) {
     const connectBtn = document.getElementById('connectBtn');
     const disconnectBtn = document.getElementById('disconnectBtn');
     
-    if (connected) {
+    // Don't show disconnected if we have active peer connections via any transport
+    const hasActivePeers = peerPreferredSource.size > 0 || 
+                          trackerPeers.size > 0 || 
+                          Array.from(dataChannels.values()).some(dc => dc?.readyState === 'open');
+    
+    const isConnected = connected || hasActivePeers;
+    
+    if (isConnected) {
         badge.textContent = 'Connected';
         badge.className = 'status-badge status-connected';
         connectBtn.disabled = true;
