@@ -1523,21 +1523,14 @@ function setupDataChannel(peerId, dataChannel, sourceHint) {
 
     dataChannel.onmessage = (event) => {
         const normalized = peerId.trim();
+        const rawContent = event.data;
         
-        let content = event.data;
-        try {
-            const parsed = JSON.parse(event.data);
-            content = JSON.stringify(parsed);
-        } catch {
-            // Use as-is
-        }
-        
-        // Deduplicate messages
-        if (isDuplicateMessage(normalized, content)) {
+        // Deduplicate messages using raw data
+        if (isDuplicateMessage(normalized, rawContent)) {
             return;
         }
         
-        displayChatMessage(content, `${peerId.substring(0, 6)}...`, false);
+        displayChatMessage(rawContent, `${peerId.substring(0, 6)}...`, false);
     };
 
     dataChannel.onclose = () => {
@@ -1772,19 +1765,20 @@ function attachTrackerPeer(peerId, peer) {
     });
 
     peer.on('data', (data) => {
+        const normalized = peerId.trim();
+        let text = '';
         try {
-            const normalized = peerId.trim();
-            const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
-            
-            // Deduplicate messages
-            if (isDuplicateMessage(normalized, text)) {
-                return;
-            }
-            
-            displayChatMessage(text, `${peerId.substring(0, 6)}...`, false);
+            text = typeof data === 'string' ? data : new TextDecoder().decode(data);
         } catch {
-            // ignore decode errors
+            return; // Can't decode, skip
         }
+        
+        // Deduplicate messages using raw data
+        if (isDuplicateMessage(normalized, text)) {
+            return;
+        }
+        
+        displayChatMessage(text, `${peerId.substring(0, 6)}...`, false);
     });
 
     peer.once('close', () => {
