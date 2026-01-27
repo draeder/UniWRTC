@@ -386,15 +386,10 @@ function updatePeerList() {
     for (const [peerId, source] of peerPreferredSource.entries()) {
         // Check if this peer's preferred connection is actually active
         let isActive = false;
-        let shouldRemove = false;
         
         if (source === 'Tracker') {
             const sp = trackerPeers.get(peerId);
             isActive = !!(sp && sp.connected);
-            // If tracker peer is gone or failed, mark for removal
-            if (!sp || sp.destroyed) {
-                shouldRemove = true;
-            }
         } else {
             // Gun or Nostr
             const pc = peerConnections.get(peerId);
@@ -403,25 +398,9 @@ function updatePeerList() {
             const connState = pc && pc.connectionState;
             
             isActive = !!(pc instanceof RTCPeerConnection && (connState === 'connected' || connState === 'connecting' || hasOpenDataChannel));
-            
-            // If RTC connection is closed/failed, mark for removal
-            if (pc && (connState === 'closed' || connState === 'failed' || connState === 'disconnected')) {
-                shouldRemove = true;
-                console.log(`[Cleanup] Removing failed RTC peer ${peerId.substring(0, 8)} (state: ${connState})`);
-            }
         }
 
-        // Remove dead peers immediately
-        if (shouldRemove) {
-            peerPreferredSource.delete(peerId);
-            if (source === 'Tracker') {
-                trackerPeers.delete(peerId);
-            } else {
-                peerConnections.delete(peerId);
-                dataChannels.delete(peerId);
-            }
-        }
-
+        // Only display if currently active (will reappear if reconnects)
         if (isActive) {
             connectedPeers.set(peerId, source);
             activeSourceTypes.add(source);
