@@ -1098,8 +1098,11 @@ async function connectNostr() {
                     if (discoveredPeerId === myPeerId) return;
                     const sourceLabel = source === 'tracker' ? 'Tracker' : source === 'gun' ? 'Gun' : 'Nostr';
                     log(`Peer discovered via ${source}: ${discoveredPeerId.substring(0, 6)}...`, 'info');
-                    // Track latest discovery source for labeling; selection happens on active connect
-                    peerSources.set(discoveredPeerId, sourceLabel);
+                        // Track discovery source for labeling; FIRST discovery source wins (immutable)
+                        // This ensures if Gun discovers peer first, Tracker won't overwrite it
+                        if (!peerSources.has(discoveredPeerId)) {
+                            peerSources.set(discoveredPeerId, sourceLabel);
+                        }
                     
                     // Track discovered peer
                     if (!peerConnections.has(discoveredPeerId)) {
