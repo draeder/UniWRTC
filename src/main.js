@@ -413,22 +413,6 @@ function updatePeerList() {
         }
     }
 
-    // Update relay URL field to show only connected types (plain URLs without labels)
-    const relayUrlInput = document.getElementById('relayUrl');
-    if (relayUrlInput && activeSourceTypes.size > 0) {
-        const urlParts = [];
-        if (activeSourceTypes.has('Nostr')) {
-            urlParts.push(...DEFAULT_RELAYS);
-        }
-        if (activeSourceTypes.has('Tracker')) {
-            urlParts.push(...DEFAULT_TRACKERS);
-        }
-        if (activeSourceTypes.has('Gun')) {
-            urlParts.push(DEFAULT_GUN_RELAY);
-        }
-        relayUrlInput.value = urlParts.join(', ');
-    }
-
     if (connectedPeers.size === 0) {
         peerList.innerHTML = '<p style="color: #94a3b8;">No peers connected</p>';
         return;
@@ -1512,6 +1496,20 @@ function setupDataChannel(peerId, dataChannel, sourceHint) {
         rtcConnectedAt.set(peerId, Date.now());
         const lastSignal = lastSignalSource.get(peerId);
         const chosen = sourceHint || lastSignal || 'Nostr';
+        const preferred = peerPreferredSource.get(peerId.trim());
+
+        // If another transport already won, tear down this channel immediately
+        if (preferred && preferred !== chosen) {
+            log(`Ignoring data channel from ${chosen} because ${preferred} already won for ${peerId.substring(0, 6)}...`, 'warning');
+            try { dataChannel.close(); } catch {}
+            const pc = peerConnections.get(peerId);
+            if (pc instanceof RTCPeerConnection) {
+                try { pc.close(); } catch {}
+            }
+            dataChannels.delete(peerId);
+            return;
+        }
+
         if (!peerSources.has(peerId) && chosen) {
             peerSources.set(peerId, chosen);
         }
