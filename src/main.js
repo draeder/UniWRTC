@@ -56,6 +56,7 @@ const lastSignalSource = new Map(); // Track last signaling transport per peer (
 const peerPreferredSource = new Map(); // First ACTIVE connection wins per peer
 const trackerConnectedAt = new Map();
 const rtcConnectedAt = new Map();
+let urlFieldLocked = false; // Lock URL field after first peer connects
 
 function setPreferredSource(peerId, source) {
     if (!source) return;
@@ -444,7 +445,18 @@ function updatePeerList() {
         displayedSources.add(source);
     }
 
-    // Don't touch URL field - let user control it
+    // Set URL field once based on first connected peer's transport, then lock it
+    if (!urlFieldLocked && displayedSources.size > 0) {
+        const relayUrlInput = document.getElementById('relayUrl');
+        if (relayUrlInput) {
+            const urlParts = [];
+            if (displayedSources.has('Nostr')) urlParts.push(...DEFAULT_RELAYS);
+            if (displayedSources.has('Tracker')) urlParts.push(...DEFAULT_TRACKERS);
+            if (displayedSources.has('Gun')) urlParts.push(DEFAULT_GUN_RELAY);
+            relayUrlInput.value = urlParts.join(', ');
+            urlFieldLocked = true; // Lock it so it never changes again this session
+        }
+    }
 }
 
 window.connect = async function() {
