@@ -1443,6 +1443,13 @@ async function createPeerConnection(peerId, shouldInitiate) {
 
     pc.onconnectionstatechange = () => {
         log(`Conn state (${peerId.substring(0, 6)}...): ${pc.connectionState}`, 'info');
+        if (!peerPreferredSource.has(peerId.trim()) && pc.connectionState === 'connected') {
+            const source = lastSignalSource.get(peerId) || peerSources.get(peerId) || 'Nostr';
+            if (!peerSources.has(peerId)) {
+                peerSources.set(peerId, source);
+            }
+            setPreferredSource(peerId, source);
+        }
         updatePeerList();
     };
 
@@ -1740,16 +1747,17 @@ function attachTrackerPeer(peerId, peer) {
     peer.on('connect', () => {
         log(`Tracker peer connected: ${peerId.substring(0, 6)}...`, 'success');
         trackerConnectedAt.set(peerId, Date.now());
+        const preferred = peerPreferredSource.get(peerId.trim());
+        if (preferred && preferred !== 'Tracker') {
+            try { peer.destroy?.(); } catch {}
+            trackerPeers.delete(peerId);
+            return;
+        }
         const chosen = 'Tracker';
         if (!peerSources.has(peerId)) {
             peerSources.set(peerId, chosen);
         }
         setPreferredSource(peerId, chosen);
-        const preferred = peerPreferredSource.get(peerId.trim());
-        if (preferred && preferred !== 'Tracker') {
-            try { peer.destroy?.(); } catch {}
-            trackerPeers.delete(peerId);
-        }
     });
 
     peer.on('data', (data) => {
