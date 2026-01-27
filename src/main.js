@@ -1581,14 +1581,16 @@ window.sendChatMessage = function() {
     }
 
     const hasRtc = dataChannels.size > 0;
-    if (!hasRtc) {
-        log('No WebRTC data channels yet. Wait for peers to connect.', 'error');
+    const hasTracker = trackerPeers.size > 0;
+    if (!hasRtc && !hasTracker) {
+        log('No WebRTC connections yet. Wait for peers to connect.', 'error');
         return;
     }
 
-    // Send to all connected peers via WebRTC data channels ONLY
+    // Send to all connected peers via any available WebRTC channel
     let sent = 0;
     
+    // First try RTC data channels
     dataChannels.forEach((dc, peerId) => {
         if (dc.readyState === 'open') {
             try {
@@ -1596,6 +1598,18 @@ window.sendChatMessage = function() {
                 sent++;
             } catch (err) {
                 console.warn('[Chat] Failed to send via datachannel to', peerId.substring(0, 6), err);
+            }
+        }
+    });
+    
+    // Also send via tracker peers (they use WebRTC internally via simple-peer)
+    trackerPeers.forEach((sp, peerId) => {
+        if (sp && sp.connected && !dataChannels.has(peerId)) {
+            try {
+                sp.send(message);
+                sent++;
+            } catch (err) {
+                console.warn('[Chat] Failed to send via tracker to', peerId.substring(0, 6), err);
             }
         }
     });
