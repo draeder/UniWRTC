@@ -72,25 +72,6 @@ function setPreferredSource(peerId, source) {
     
     peerPreferredSource.set(normalized, source);
     console.log(`[Select] ${source} is preferred for ${normalized.substring(0, 8)}`);
-
-    // Close lower-priority connections when a preferred source becomes active
-    // Priority is based on the chosen source only; others are closed for stability.
-    if (source === 'Tracker') {
-        // Close any RTCPeerConnection for this peer
-        const pc = peerConnections.get(peerId);
-        if (pc instanceof RTCPeerConnection) {
-            try { pc.close(); } catch {}
-            peerConnections.delete(peerId);
-            dataChannels.delete(peerId);
-        }
-    } else { // Nostr or Gun via RTCPeerConnection
-        // Close any tracker peer for this peer
-        const sp = trackerPeers.get(peerId);
-        if (sp) {
-            try { sp.destroy?.(); } catch {}
-            trackerPeers.delete(peerId);
-        }
-    }
     updatePeerList();
 }
 
@@ -1527,48 +1508,36 @@ function setupDataChannel(peerId, dataChannel, sourceHint) {
         const chosen = sourceHint || lastSignal || 'Nostr';
         const preferred = peerPreferredSource.get(normalized);
 
-        // If another transport already won, tear down this channel immediately
-        if (preferred && preferred !== chosen) {
-            log(`Ignoring data channel from ${chosen} because ${preferred} already won for ${peerId.substring(0, 6)}...`, 'warning');
-            try { dataChannel.close(); } catch {}
-            const pc = peerConnections.get(normalized);
-            if (pc instanceof RTCPeerConnection) {
-                try { pc.close(); } catch {}
-            }
-            dataChannels.delete(normalized);
-            return;
-        }
-
         log(`Data channel open with ${peerId.substring(0, 6)}...`, 'success');
         rtcConnectedAt.set(normalized, Date.now());
         
         if (!peerSources.has(normalized) && chosen) {
             peerSources.set(normalized, chosen);
         }
-        setPreferredSource(normalized, chosen);
+        
+        // Only set preferred if not already set (first wins)
+        if (!preferred) {
+            setPreferredSource(normalized, chosen);
+        }
     };
 
     dataChannel.onmessage = (event) => {
         const normalized = peerId.trim();
-        const preferred = peerPreferredSource.get(normalized);
-        const source = sourceHint || lastSignalSource.get(normalized) || peerSources.get(normalized) || 'Nostr';
         
-        // Only display if this is the preferred source to avoid duplicates
-        if (preferred && preferred !== source) {
-            return;
-        }
-        
-        let message;
+        let content = event.data;
         try {
-            message = JSON.parse(event.data);
+            const parsed = JSON.parse(event.data);
+            content = JSON.stringify(parsed);
         } catch {
-            // Treat as plain text chat message
-            displayChatMessage(event.data, `${peerId.substring(0, 6)}...`, false);
+            // Use as-is
+        }
+        
+        // Deduplicate messages
+        if (isDuplicateMessage(normalized, content)) {
             return;
         }
-
-        // Treat as chat message
-        displayChatMessage(JSON.stringify(message), `${peerId.substring(0, 6)}...`, false);
+        
+        displayChatMessage(content, `${peerId.substring(0, 6)}...`, false);
     };
 
     dataChannel.onclose = () => {
@@ -1793,20 +1762,25 @@ function attachTrackerPeer(peerId, peer) {
         if (!peerSources.has(normalized)) {
             peerSources.set(normalized, chosen);
         }
-        setPreferredSource(normalized, chosen);
+        
+        const preferredSource = peerPreferredSource.get(normalized);
+        if (!preferredSource) {
+            setPreferredSource(normalized, chosen);
+        }
+        
+        log(`Tracker peer connected: ${peerId.substring(0, 6)}...`, 'success');
     });
 
     peer.on('data', (data) => {
         try {
             const normalized = peerId.trim();
-            const preferred = peerPreferredSource.get(normalized);
+            const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
             
-            // Only display if Tracker is the preferred source to avoid duplicates
-            if (preferred && preferred !== 'Tracker') {
+            // Deduplicate messages
+            if (isDuplicateMessage(normalized, text)) {
                 return;
             }
             
-            const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
             displayChatMessage(text, `${peerId.substring(0, 6)}...`, false);
         } catch {
             // ignore decode errors
