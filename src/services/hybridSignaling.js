@@ -139,25 +139,29 @@ export class HybridSignaling {
         }
       });
 
-      // Announce presence
+      // Announce presence with roomId to scope peers to this room
       room.get('peers').get(this.peerId).put({
         id: this.peerId,
+        roomId: this.roomId,
         timestamp: Date.now()
       });
 
-      // Listen for peers - filter out stale entries
+      // Listen for peers - filter out stale entries AND ensure they belong to this room
       room.get('peers').map().on((peerData, gunKey) => {
         if (!peerData || !peerData.id) return;
         
         const peerId = peerData.id;
         if (peerId === this.peerId) return;
         
-        // Filter out peers older than 2 minutes (likely offline)
+        // Filter out peers older than 2 minutes (likely offline) - DELETE from Gun to prevent resurrection
         const peerAge = Date.now() - (peerData.timestamp || 0);
         const MAX_PEER_AGE = 2 * 60 * 1000; // 2 minutes
         
         if (peerAge > MAX_PEER_AGE) {
-          console.log('[Gun] Ignoring stale peer:', peerId.substring(0, 8), `(${Math.floor(peerAge / 1000)}s old)`);
+          console.log('[Gun] Ignoring stale peer:', peerId.substring(0, 8), `(${Math.floor(peerAge / 1000)}s old) - removing from Gun`);
+          // CRITICAL: Delete the stale peer entry from Gun to prevent it from being rediscovered
+          room.get('peers').get(peerId).remove();
+          this.gunPeers.delete(peerId);
           return;
         }
         
@@ -172,10 +176,11 @@ export class HybridSignaling {
         }
       });
 
-      // Heartbeat: Update presence every 30 seconds
+      // Heartbeat: Update presence every 30 seconds with roomId to maintain scoping
       this.gunHeartbeat = setInterval(() => {
         room.get('peers').get(this.peerId).put({
           id: this.peerId,
+          roomId: this.roomId,
           timestamp: Date.now()
         });
       }, 30000);
