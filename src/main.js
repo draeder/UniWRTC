@@ -190,17 +190,22 @@ document.getElementById('app').innerHTML = `
                 </label>
             </div>
             <div style="display: flex; gap: 15px; padding: 10px; background: #f8fafc; border-radius: 4px; border: 1px solid #e2e8f0;">
+                <label style="display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 13px; font-weight: 600;">
+                    <input type="checkbox" id="signalFabricToggle" onchange="window.toggleSignalFabric()" style="cursor: pointer; width: 16px; height: 16px;">
+                    Signal Fabric
+                </label>
+                <div style="width: 1px; background: #cbd5e1;"></div>
                 <label style="display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 13px;">
                     <input type="checkbox" id="nostrToggle" checked style="cursor: pointer; width: 16px; height: 16px;">
-                    Nostr (Primary)
+                    Nostr
                 </label>
                 <label style="display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 13px;">
                     <input type="checkbox" id="trackerToggle" checked style="cursor: pointer; width: 16px; height: 16px;">
-                    Tracker (Peers)
+                    Tracker
                 </label>
                 <label style="display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 13px;">
                     <input type="checkbox" id="gunToggle" checked style="cursor: pointer; width: 16px; height: 16px;">
-                    Gun (Backup)
+                    Gun
                 </label>
             </div>
         </div>
@@ -1323,6 +1328,52 @@ window.toggleEncryption = function() {
     const status = encryptionEnabled ? 'enabled' : 'disabled';
     console.log('[Crypto] Encryption', status);
     log(`Signaling encryption ${status}`, 'info');
+};
+
+window.toggleSignalFabric = function() {
+    const fabricToggle = document.getElementById('signalFabricToggle');
+    const nostrToggle = document.getElementById('nostrToggle');
+    const trackerToggle = document.getElementById('trackerToggle');
+    const gunToggle = document.getElementById('gunToggle');
+    
+    if (fabricToggle.checked) {
+        // Check all source toggles
+        nostrToggle.checked = true;
+        trackerToggle.checked = true;
+        gunToggle.checked = true;
+        
+        // Grey them out (disable)
+        nostrToggle.disabled = true;
+        trackerToggle.disabled = true;
+        gunToggle.disabled = true;
+        
+        // Style disabled state
+        document.querySelectorAll('[id$="Toggle"][disabled]').forEach(input => {
+            const label = input.closest('label');
+            if (label) {
+                label.style.opacity = '0.5';
+                label.style.cursor = 'not-allowed';
+            }
+        });
+    } else {
+        // Uncheck and enable all source toggles
+        nostrToggle.checked = false;
+        trackerToggle.checked = false;
+        gunToggle.checked = false;
+        
+        nostrToggle.disabled = false;
+        trackerToggle.disabled = false;
+        gunToggle.disabled = false;
+        
+        // Restore normal style
+        document.querySelectorAll('[id$="Toggle"]:not([disabled])').forEach(input => {
+            const label = input.closest('label');
+            if (label) {
+                label.style.opacity = '1';
+                label.style.cursor = 'pointer';
+            }
+        });
+    }
 };
 
 // REMOVED: load handler was firing before HTML existed
