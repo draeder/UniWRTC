@@ -1548,6 +1548,15 @@ function setupDataChannel(peerId, dataChannel, sourceHint) {
     };
 
     dataChannel.onmessage = (event) => {
+        const normalized = peerId.trim();
+        const preferred = peerPreferredSource.get(normalized);
+        const source = sourceHint || lastSignalSource.get(normalized) || peerSources.get(normalized) || 'Nostr';
+        
+        // Only display if this is the preferred source to avoid duplicates
+        if (preferred && preferred !== source) {
+            return;
+        }
+        
         let message;
         try {
             message = JSON.parse(event.data);
@@ -1788,6 +1797,14 @@ function attachTrackerPeer(peerId, peer) {
 
     peer.on('data', (data) => {
         try {
+            const normalized = peerId.trim();
+            const preferred = peerPreferredSource.get(normalized);
+            
+            // Only display if Tracker is the preferred source to avoid duplicates
+            if (preferred && preferred !== 'Tracker') {
+                return;
+            }
+            
             const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
             displayChatMessage(text, `${peerId.substring(0, 6)}...`, false);
         } catch {
