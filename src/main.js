@@ -1756,8 +1756,9 @@ function attachTrackerPeer(peerId, peer) {
 
     trackerPeers.set(peerId, peer);
     log(`Attaching tracker peer: ${peerId.substring(0, 6)}...`, 'info');
+    peer.setMaxListeners(0); // Prevent MaxListenersExceededWarning
 
-    peer.on('connect', () => {
+    peer.once('connect', () => {
         log(`Tracker peer connected: ${peerId.substring(0, 6)}...`, 'success');
         const normalized = peerId.trim();
         trackerConnectedAt.set(normalized, Date.now());
@@ -1783,7 +1784,7 @@ function attachTrackerPeer(peerId, peer) {
         }
     });
 
-    peer.on('close', () => {
+    peer.once('close', () => {
         trackerPeers.delete(peerId);
         trackerConnectedAt.delete(peerId);
         // DO NOT delete peerPreferredSource - it must remain stable for the peer's lifetime
@@ -1792,7 +1793,7 @@ function attachTrackerPeer(peerId, peer) {
         log(`Tracker peer closed: ${peerId.substring(0, 6)}...`, 'warning');
     });
 
-    peer.on('error', (err) => {
+    peer.once('error', (err) => {
         log(`Tracker peer error: ${peerId.substring(0, 6)}... ${err?.message || err}`, 'warning');
     });
 }

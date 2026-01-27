@@ -139,12 +139,21 @@ export class HybridSignaling {
         }
       });
 
-      // Announce presence with roomId to scope peers to this room
-      room.get('peers').get(this.peerId).put({
-        id: this.peerId,
-        roomId: this.roomId,
-        timestamp: Date.now()
-      });
+      // Debounce presence updates to avoid excessive Gun syncing
+      let presenceUpdateTimer = null;
+      const updatePresence = () => {
+        clearTimeout(presenceUpdateTimer);
+        presenceUpdateTimer = setTimeout(() => {
+          room.get('peers').get(this.peerId).put({
+            id: this.peerId,
+            roomId: this.roomId,
+            timestamp: Date.now()
+          });
+        }, 500); // Debounce by 500ms to batch updates
+      };
+
+      // Initial presence announcement
+      updatePresence();
 
       // Listen for peers - filter out stale entries AND ensure they belong to this room
       room.get('peers').map().on((peerData, gunKey) => {
@@ -178,11 +187,7 @@ export class HybridSignaling {
 
       // Heartbeat: Update presence every 30 seconds with roomId to maintain scoping
       this.gunHeartbeat = setInterval(() => {
-        room.get('peers').get(this.peerId).put({
-          id: this.peerId,
-          roomId: this.roomId,
-          timestamp: Date.now()
-        });
+        updatePresence();
       }, 30000);
 
       console.log('[Gun] Initialized signaling for room:', this.roomId);
