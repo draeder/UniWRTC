@@ -52,6 +52,7 @@ const outboundIceBatches = new Map();
 const trackerPeers = new Map(); // simple-peer instances from tracker
 const initiatedPeers = new Set(); // Track peers we've already sent offers to (any method)
 const peerSources = new Map(); // Track connection source for each peer (nostr/tracker/gun)
+const lastSignalSource = new Map(); // Track last signaling transport per peer (nostr/gun)
 const peerPreferredSource = new Map(); // First ACTIVE connection wins per peer
 const trackerConnectedAt = new Map();
 const rtcConnectedAt = new Map();
@@ -1124,6 +1125,8 @@ async function connectNostr() {
                 },
                 onSignal: async ({ source, from, signal }) => {
                     const peerId = from;
+                    const sourceLabel = source === 'gun' ? 'Gun' : 'Nostr';
+                    lastSignalSource.set(peerId, sourceLabel);
                     log(`Signal via ${source} from ${peerId.substring(0, 6)}...`, 'info');
                     
                     // Process Gun signals - establish WebRTC connections
@@ -1461,14 +1464,16 @@ async function createPeerConnection(peerId, shouldInitiate) {
 
     pc.ondatachannel = (event) => {
             log(`Received data channel from ${peerId.substring(0, 6)}`, 'info');
-        setupDataChannel(peerId, event.channel);
+        const hint = lastSignalSource.get(peerId) || peerSources.get(peerId);
+        setupDataChannel(peerId, event.channel, hint);
     };
 
     if (shouldInitiate) {
         // Only create data channel if we don't have one yet
         if (!dataChannels.has(peerId)) {
             const dc = pc.createDataChannel('chat');
-            setupDataChannel(peerId, dc);
+            const hint = lastSignalSource.get(peerId) || peerSources.get(peerId) || 'Nostr';
+            setupDataChannel(peerId, dc, hint);
         } else {
             log(`Data channel already exists for ${peerId.substring(0, 6)}, reusing`, 'info');
         }
@@ -1495,7 +1500,7 @@ async function createPeerConnection(peerId, shouldInitiate) {
     return pc;
 }
 
-function setupDataChannel(peerId, dataChannel) {
+function setupDataChannel(peerId, dataChannel, sourceHint) {
     // Avoid duplicate data channel setup
     if (dataChannels.has(peerId)) {
         log(`Data channel already exists for ${peerId.substring(0, 6)}, skipping duplicate`, 'warning');
@@ -1505,7 +1510,12 @@ function setupDataChannel(peerId, dataChannel) {
     dataChannel.onopen = () => {
         log(`Data channel open with ${peerId.substring(0, 6)}...`, 'success');
         rtcConnectedAt.set(peerId, Date.now());
-        const chosen = peerSources.get(peerId) || 'Nostr';
+        const discovered = peerSources.get(peerId);
+        const lastSignal = lastSignalSource.get(peerId);
+        const chosen = sourceHint || lastSignal || discovered || 'Nostr';
+        if (!peerSources.has(peerId) && chosen) {
+            peerSources.set(peerId, chosen);
+        }
         setPreferredSource(peerId, chosen);
     };
 
@@ -1639,7 +1649,7 @@ async function initiateGunWebRTC(peerId) {
         
         // Create data channel
         const dataChannel = pc.createDataChannel('chat');
-        setupDataChannel(peerId, dataChannel);
+        setupDataChannel(peerId, dataChannel, 'Gun');
         
         // Create and send offer via Gun
         const offer = await pc.createOffer();
@@ -1725,7 +1735,9 @@ function attachTrackerPeer(peerId, peer) {
     peer.on('connect', () => {
         log(`Tracker peer connected: ${peerId.substring(0, 6)}...`, 'success');
         trackerConnectedAt.set(peerId, Date.now());
-        setPreferredSource(peerId, 'Tracker');
+        // Respect first-discovered source; only default to Tracker if none recorded
+        const chosen = peerSources.get(peerId) || 'Tracker';
+        setPreferredSource(peerId, chosen);
     });
 
     peer.on('data', (data) => {
