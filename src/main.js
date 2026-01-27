@@ -1496,14 +1496,16 @@ async function createPeerConnection(peerId, shouldInitiate) {
 }
 
 function setupDataChannel(peerId, dataChannel, sourceHint) {
+    // Normalize peer ID for consistent tracking
+    const normalized = peerId.trim();
+    
     // Avoid duplicate data channel setup
-    if (dataChannels.has(peerId)) {
+    if (dataChannels.has(normalized)) {
         log(`Data channel already exists for ${peerId.substring(0, 6)}, skipping duplicate`, 'warning');
         return;
     }
     
     dataChannel.onopen = () => {
-        const normalized = peerId.trim();
         const lastSignal = lastSignalSource.get(normalized);
         const chosen = sourceHint || lastSignal || 'Nostr';
         const preferred = peerPreferredSource.get(normalized);
@@ -1522,27 +1524,19 @@ function setupDataChannel(peerId, dataChannel, sourceHint) {
     };
 
     dataChannel.onmessage = (event) => {
-        const normalized = peerId.trim();
-        const rawContent = event.data;
-        
-        // Deduplicate messages using raw data
-        if (isDuplicateMessage(normalized, rawContent)) {
-            return;
-        }
-        
-        displayChatMessage(rawContent, `${peerId.substring(0, 6)}...`, false);
+        displayChatMessage(event.data, `${peerId.substring(0, 6)}...`, false);
     };
 
     dataChannel.onclose = () => {
             log(`Data channel closed with ${peerId.substring(0, 6)}...`, 'warning');
-        dataChannels.delete(peerId);
-        rtcConnectedAt.delete(peerId);
+        dataChannels.delete(normalized);
+        rtcConnectedAt.delete(normalized);
         // DO NOT delete peerPreferredSource - it must remain stable for the peer's lifetime
         // This ensures "first source wins" is never violated, even if connections drop
         updatePeerList();
     };
 
-    dataChannels.set(peerId, dataChannel);
+    dataChannels.set(normalized, dataChannel);
 }
 
 window.sendChatMessage = function() {
@@ -1765,20 +1759,13 @@ function attachTrackerPeer(peerId, peer) {
     });
 
     peer.on('data', (data) => {
-        const normalized = peerId.trim();
-        let text = '';
         try {
-            text = typeof data === 'string' ? data : new TextDecoder().decode(data);
+            const normalized = peerId.trim();
+            const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
+            displayChatMessage(text, `${peerId.substring(0, 6)}...`, false);
         } catch {
-            return; // Can't decode, skip
+            // ignore decode errors
         }
-        
-        // Deduplicate messages using raw data
-        if (isDuplicateMessage(normalized, text)) {
-            return;
-        }
-        
-        displayChatMessage(text, `${peerId.substring(0, 6)}...`, false);
     });
 
     peer.once('close', () => {
