@@ -1524,7 +1524,8 @@ function setupDataChannel(peerId, dataChannel, sourceHint) {
     };
 
     dataChannel.onmessage = (event) => {
-        const preferred = peerPreferredSource.get(normalized);
+        const n = peerId.trim();
+        const preferred = peerPreferredSource.get(n);
         // Only display if this is preferred source or no preference set yet
         // (preference locks in on onopen via setPreferredSource, so this double-checks)
         if (preferred && preferred !== 'Nostr' && preferred !== 'Gun') {
