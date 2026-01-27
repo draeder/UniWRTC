@@ -411,17 +411,6 @@ function updatePeerList() {
         }
     }
 
-    // Show accurate URLs for the transports actually in use
-    const relayUrlInput = document.getElementById('relayUrl');
-    if (relayUrlInput && connectedPeers.size > 0) {
-        const activePreferredSources = new Set([...connectedPeers.values()]);
-        const urlParts = [];
-        if (activePreferredSources.has('Nostr')) urlParts.push(...DEFAULT_RELAYS);
-        if (activePreferredSources.has('Tracker')) urlParts.push(...DEFAULT_TRACKERS);
-        if (activePreferredSources.has('Gun')) urlParts.push(DEFAULT_GUN_RELAY);
-        relayUrlInput.value = urlParts.join(', ');
-    }
-
     if (connectedPeers.size === 0) {
         peerList.innerHTML = '<p style="color: #94a3b8;">No peers connected</p>';
         return;
@@ -429,6 +418,7 @@ function updatePeerList() {
 
     peerList.innerHTML = '';
     const displayedPeerSubstrings = new Set(); // Track peer ID substrings already displayed
+    const displayedSources = new Set();
     
     for (const [peerId, source] of connectedPeers) {
         const peerSubstring = peerId.substring(0, 8);
@@ -444,6 +434,17 @@ function updatePeerList() {
         peerItem.className = 'peer-item';
         peerItem.innerHTML = `<span style="color: #64748b; font-size: 11px;">[${source}]</span> ${peerSubstring}...`;
         peerList.appendChild(peerItem);
+        displayedSources.add(source);
+    }
+
+    // Show accurate URLs for the transports actually displayed
+    const relayUrlInput = document.getElementById('relayUrl');
+    if (relayUrlInput && displayedSources.size > 0) {
+        const urlParts = [];
+        if (displayedSources.has('Nostr')) urlParts.push(...DEFAULT_RELAYS);
+        if (displayedSources.has('Tracker')) urlParts.push(...DEFAULT_TRACKERS);
+        if (displayedSources.has('Gun')) urlParts.push(DEFAULT_GUN_RELAY);
+        relayUrlInput.value = urlParts.join(', ');
     }
 }
 
