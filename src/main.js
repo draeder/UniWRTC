@@ -56,7 +56,6 @@ const lastSignalSource = new Map(); // Track last signaling transport per peer (
 const peerPreferredSource = new Map(); // First ACTIVE connection wins per peer
 const trackerConnectedAt = new Map();
 const rtcConnectedAt = new Map();
-const gunInitiationTimers = new Map();
 
 function setPreferredSource(peerId, source) {
     if (!source) return;
@@ -72,13 +71,6 @@ function setPreferredSource(peerId, source) {
     
     peerPreferredSource.set(normalized, source);
     console.log(`[Select] ${source} is preferred for ${normalized.substring(0, 8)}`);
-
-    // Stop any pending Gun initiation timers once a source is chosen
-    const timer = gunInitiationTimers.get(normalized);
-    if (timer) {
-        clearTimeout(timer);
-        gunInitiationTimers.delete(normalized);
-    }
 
     // Close lower-priority connections when a preferred source becomes active
     // Priority is based on the chosen source only; others are closed for stability.
@@ -1124,9 +1116,11 @@ async function connectNostr() {
                         attachTrackerPeer(discoveredPeerId, peer);
                     }
                     
-                    // If from Gun, schedule WebRTC only if we still have no preferred source after a short delay
-                    if (source === 'gun') {
-                        scheduleGunInitiation(discoveredPeerId);
+                    // If from Gun, initiate WebRTC if we're the initiator
+                    if (source === 'gun' && shouldInitiateWith(discoveredPeerId)) {
+                        // Mark Gun peers as ready immediately (no probe needed)
+                        readyPeers.add(discoveredPeerId);
+                        initiateGunWebRTC(discoveredPeerId);
                     }
                 },
                 onSignal: async ({ source, from, signal }) => {
@@ -1723,20 +1717,7 @@ async function handleGunSignal(peerId, signal) {
     }
 }
 
-function scheduleGunInitiation(peerId) {
-    const normalized = peerId.trim();
-    if (gunInitiationTimers.has(normalized)) return;
-
-    const timer = setTimeout(() => {
-        gunInitiationTimers.delete(normalized);
-        if (peerPreferredSource.has(normalized)) return; // someone already won
-        if (!shouldInitiateWith(normalized)) return; // deterministic initiator check
-        readyPeers.add(normalized);
-        initiateGunWebRTC(normalized);
-    }, 1200); // wait a moment to allow tracker/nostr to win first
-
-    gunInitiationTimers.set(normalized, timer);
-}
+// Removed gun initiation delay: the first successful connection wins immediately
 
 function attachTrackerPeer(peerId, peer) {
     if (!peer) return;
