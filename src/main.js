@@ -1453,20 +1453,22 @@ async function createPeerConnection(peerId, shouldInitiate) {
 
     pc.onconnectionstatechange = () => {
         log(`Conn state (${peerId.substring(0, 6)}...): ${pc.connectionState}`, 'info');
-        if (!peerPreferredSource.has(peerId.trim()) && pc.connectionState === 'connected') {
-            const source = lastSignalSource.get(peerId) || peerSources.get(peerId) || 'Nostr';
-            if (!peerSources.has(peerId)) {
-                peerSources.set(peerId, source);
+        const normalized = peerId.trim();
+        if (!peerPreferredSource.has(normalized) && pc.connectionState === 'connected') {
+            const source = lastSignalSource.get(normalized) || peerSources.get(normalized) || 'Nostr';
+            if (!peerSources.has(normalized)) {
+                peerSources.set(normalized, source);
             }
-            setPreferredSource(peerId, source);
+            setPreferredSource(normalized, source);
         }
         updatePeerList();
     };
 
     pc.ondatachannel = (event) => {
             log(`Received data channel from ${peerId.substring(0, 6)}`, 'info');
-        const hint = lastSignalSource.get(peerId) || null;
-        setupDataChannel(peerId, event.channel, hint);
+        const normalized = peerId.trim();
+        const hint = lastSignalSource.get(normalized) || null;
+        setupDataChannel(normalized, event.channel, hint);
     };
 
     if (shouldInitiate) {
@@ -1510,27 +1512,28 @@ function setupDataChannel(peerId, dataChannel, sourceHint) {
     
     dataChannel.onopen = () => {
         log(`Data channel open with ${peerId.substring(0, 6)}...`, 'success');
-        rtcConnectedAt.set(peerId, Date.now());
-        const lastSignal = lastSignalSource.get(peerId);
+        const normalized = peerId.trim();
+        rtcConnectedAt.set(normalized, Date.now());
+        const lastSignal = lastSignalSource.get(normalized);
         const chosen = sourceHint || lastSignal || 'Nostr';
-        const preferred = peerPreferredSource.get(peerId.trim());
+        const preferred = peerPreferredSource.get(normalized);
 
         // If another transport already won, tear down this channel immediately
         if (preferred && preferred !== chosen) {
             log(`Ignoring data channel from ${chosen} because ${preferred} already won for ${peerId.substring(0, 6)}...`, 'warning');
             try { dataChannel.close(); } catch {}
-            const pc = peerConnections.get(peerId);
+            const pc = peerConnections.get(normalized);
             if (pc instanceof RTCPeerConnection) {
                 try { pc.close(); } catch {}
             }
-            dataChannels.delete(peerId);
+            dataChannels.delete(normalized);
             return;
         }
 
-        if (!peerSources.has(peerId) && chosen) {
-            peerSources.set(peerId, chosen);
+        if (!peerSources.has(normalized) && chosen) {
+            peerSources.set(normalized, chosen);
         }
-        setPreferredSource(peerId, chosen);
+        setPreferredSource(normalized, chosen);
     };
 
     dataChannel.onmessage = (event) => {
@@ -1756,18 +1759,19 @@ function attachTrackerPeer(peerId, peer) {
 
     peer.on('connect', () => {
         log(`Tracker peer connected: ${peerId.substring(0, 6)}...`, 'success');
-        trackerConnectedAt.set(peerId, Date.now());
-        const preferred = peerPreferredSource.get(peerId.trim());
+        const normalized = peerId.trim();
+        trackerConnectedAt.set(normalized, Date.now());
+        const preferred = peerPreferredSource.get(normalized);
         if (preferred && preferred !== 'Tracker') {
             try { peer.destroy?.(); } catch {}
-            trackerPeers.delete(peerId);
+            trackerPeers.delete(normalized);
             return;
         }
         const chosen = 'Tracker';
-        if (!peerSources.has(peerId)) {
-            peerSources.set(peerId, chosen);
+        if (!peerSources.has(normalized)) {
+            peerSources.set(normalized, chosen);
         }
-        setPreferredSource(peerId, chosen);
+        setPreferredSource(normalized, chosen);
     });
 
     peer.on('data', (data) => {
