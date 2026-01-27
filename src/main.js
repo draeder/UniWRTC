@@ -58,9 +58,18 @@ const rtcConnectedAt = new Map();
 
 function setPreferredSource(peerId, source) {
     if (!source) return;
-    if (peerPreferredSource.has(peerId)) return; // already chosen
-    peerPreferredSource.set(peerId, source);
-    console.log(`[Select] ${source} is preferred for ${peerId.substring(0, 8)}`);
+    
+    // Normalize peerId: trim whitespace and use consistent casing to prevent duplicates
+    const normalized = peerId.trim();
+    
+    if (peerPreferredSource.has(normalized)) {
+        const existing = peerPreferredSource.get(normalized);
+        console.log(`[Select] ${normalized.substring(0, 8)} already preferred as ${existing}, rejecting ${source}`);
+        return; // already chosen
+    }
+    
+    peerPreferredSource.set(normalized, source);
+    console.log(`[Select] ${source} is preferred for ${normalized.substring(0, 8)}`);
 
     // Close lower-priority connections when a preferred source becomes active
     // Priority is based on the chosen source only; others are closed for stability.
