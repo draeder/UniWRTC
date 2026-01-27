@@ -35,6 +35,14 @@ const DEFAULT_RELAYS = [
     'wss://relay.damus.io',
 ];
 
+const DEFAULT_TRACKERS = [
+    'wss://tracker.openwebtorrent.com',
+    'wss://tracker.webtorrent.dev',
+    'wss://tracker.btorrent.xyz'
+];
+
+const DEFAULT_GUN_RELAY = 'https://relay.peer.ooo/gun';
+
 
 let client = null;
 const peerConnections = new Map();
@@ -42,6 +50,81 @@ const dataChannels = new Map();
 const pendingIce = new Map();
 const outboundIceBatches = new Map();
 const trackerPeers = new Map(); // simple-peer instances from tracker
+const initiatedPeers = new Set(); // Track peers we've already sent offers to (any method)
+const peerSources = new Map(); // Track connection source for each peer (nostr/tracker/gun)
+const peerPreferredSource = new Map(); // First ACTIVE connection wins per peer
+const trackerConnectedAt = new Map();
+const rtcConnectedAt = new Map();
+
+function setPreferredSource(peerId, source) {
+    if (!source) return;
+    if (peerPreferredSource.has(peerId)) return; // already chosen
+    peerPreferredSource.set(peerId, source);
+    console.log(`[Select] ${source} is preferred for ${peerId.substring(0, 8)}`);
+
+    // Close lower-priority connections when a preferred source becomes active
+    // Priority is based on the chosen source only; others are closed for stability.
+    if (source === 'Tracker') {
+        // Close any RTCPeerConnection for this peer
+        const pc = peerConnections.get(peerId);
+        if (pc instanceof RTCPeerConnection) {
+            try { pc.close(); } catch {}
+            peerConnections.delete(peerId);
+            dataChannels.delete(peerId);
+        }
+    } else { // Nostr or Gun via RTCPeerConnection
+        // Close any tracker peer for this peer
+        const sp = trackerPeers.get(peerId);
+        if (sp) {
+            try { sp.destroy?.(); } catch {}
+            trackerPeers.delete(peerId);
+        }
+    }
+    updatePeerList();
+}
+
+function enforcePreferredConnections() {
+    for (const [peerId, preferred] of peerPreferredSource.entries()) {
+        if (preferred === 'Tracker') {
+            const pc = peerConnections.get(peerId);
+            if (pc instanceof RTCPeerConnection) {
+                try { pc.close(); } catch {}
+                peerConnections.delete(peerId);
+                dataChannels.delete(peerId);
+            }
+        } else {
+            const sp = trackerPeers.get(peerId);
+            if (sp) {
+                try { sp.destroy?.(); } catch {}
+                trackerPeers.delete(peerId);
+            }
+        }
+    }
+}
+
+function enforcePriorityConnections(peerId) {
+    const source = peerSources.get(peerId);
+    if (!source) return;
+
+    // Nostr > Tracker > Gun
+    if (source === 'Nostr') {
+        const trackerPeer = trackerPeers.get(peerId);
+        if (trackerPeer) {
+            console.log(`[Dedupe] Closing Tracker because Nostr is preferred for ${peerId.substring(0, 8)}`);
+            trackerPeer.destroy?.();
+            trackerPeers.delete(peerId);
+        }
+    } else if (source === 'Tracker') {
+        // Close lower-priority Gun RTCPeerConnection
+        const pc = peerConnections.get(peerId);
+        if (pc instanceof RTCPeerConnection && peerSources.get(peerId) === 'Gun') {
+            console.log(`[Dedupe] Closing Gun because Tracker is preferred for ${peerId.substring(0, 8)}`);
+            pc.close();
+            peerConnections.delete(peerId);
+            dataChannels.delete(peerId);
+        }
+    }
+}
 
 function bytesToHex(bytes) {
     return Array.from(bytes)
@@ -78,8 +161,8 @@ document.getElementById('app').innerHTML = `
             <h2>Connection</h2>
             <div class="connection-controls">
                 <div>
-                    <label style="display: block; margin-bottom: 5px; color: #64748b; font-size: 13px;">Relay URL(s)</label>
-                    <input type="text" id="relayUrl" data-testid="relayUrl" placeholder="wss://relay.damus.io" value="${DEFAULT_RELAYS.join(', ')}" style="width: 100%; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px; font-family: monospace; font-size: 12px;">
+                    <label style="display: block; margin-bottom: 5px; color: #64748b; font-size: 13px;">Relay/Tracker URLs</label>
+                    <input type="text" id="relayUrl" data-testid="relayUrl" placeholder="wss://relay.primal.net, wss://relay.damus.io" value="" style="width: 100%; padding: 8px; border: 1px solid #e2e8f0; border-radius: 4px; font-family: monospace; font-size: 12px;">
                 </div>
                 <div>
                     <label style="display: block; margin-bottom: 5px; color: #64748b; font-size: 13px;">Room / Session ID</label>
@@ -278,42 +361,77 @@ function updateStatus(connected) {
 function updatePeerList() {
     const peerList = document.getElementById('peerList');
     if (!peerList) return;
+    
+    // Enforce: close all non-preferred connections
+    enforcePreferredConnections();
+    
+    // DEBUG: Log what's in peerPreferredSource
+    console.log(`[updatePeerList] peerPreferredSource has ${peerPreferredSource.size} entries:`, 
+        Array.from(peerPreferredSource.entries()).map(([id, src]) => `${id.substring(0,8)}...: ${src}`).join(', ')
+    );
+    
+    // Build display from ONLY peerPreferredSource - one entry per peer guaranteed
+    const connectedPeers = new Map(); // peerId -> source
+    const activeSourceTypes = new Set();
 
-    const connectedPeerIds = [];
-    for (const [peerId, pc] of peerConnections.entries()) {
-        if (!(pc instanceof RTCPeerConnection)) continue;
+    for (const [peerId, source] of peerPreferredSource.entries()) {
+        // Check if this peer's preferred connection is actually active
+        let isActive = false;
+        if (source === 'Tracker') {
+            const sp = trackerPeers.get(peerId);
+            isActive = !!(sp && sp.connected);
+        } else {
+            // Gun or Nostr
+            const pc = peerConnections.get(peerId);
+            const dc = dataChannels.get(peerId);
+            const hasOpenDataChannel = dc && dc.readyState === 'open';
+            const connState = pc && pc.connectionState;
+            isActive = !!(pc instanceof RTCPeerConnection && (connState === 'connected' || connState === 'connecting' || hasOpenDataChannel));
+        }
 
-        // Prefer data channel state when available.
-        const dc = dataChannels.get(peerId);
-        const hasOpenDataChannel = dc && dc.readyState === 'open';
-
-        const connState = pc.connectionState;
-        const isActive = connState === 'connected' || connState === 'connecting' || hasOpenDataChannel;
-
-        // Explicitly hide failed/disconnected/closed peers.
-        if (!isActive) continue;
-        if (connState === 'failed' || connState === 'disconnected' || connState === 'closed') continue;
-
-        connectedPeerIds.push(peerId);
-    }
-
-    // Include tracker peers (simple-peer) that are connected
-    for (const [peerId, sp] of trackerPeers.entries()) {
-        if (sp && sp.connected) {
-            connectedPeerIds.push(peerId);
+        if (isActive) {
+            connectedPeers.set(peerId, source);
+            activeSourceTypes.add(source);
         }
     }
 
-    if (connectedPeerIds.length === 0) {
+    // Update relay URL field to show only connected types (plain URLs without labels)
+    const relayUrlInput = document.getElementById('relayUrl');
+    if (relayUrlInput && activeSourceTypes.size > 0) {
+        const urlParts = [];
+        if (activeSourceTypes.has('Nostr')) {
+            urlParts.push(...DEFAULT_RELAYS);
+        }
+        if (activeSourceTypes.has('Tracker')) {
+            urlParts.push(...DEFAULT_TRACKERS);
+        }
+        if (activeSourceTypes.has('Gun')) {
+            urlParts.push(DEFAULT_GUN_RELAY);
+        }
+        relayUrlInput.value = urlParts.join(', ');
+    }
+
+    if (connectedPeers.size === 0) {
         peerList.innerHTML = '<p style="color: #94a3b8;">No peers connected</p>';
         return;
     }
 
     peerList.innerHTML = '';
-    for (const peerId of connectedPeerIds) {
+    const displayedPeerSubstrings = new Set(); // Track peer ID substrings already displayed
+    
+    for (const [peerId, source] of connectedPeers) {
+        const peerSubstring = peerId.substring(0, 8);
+        
+        // HARD BLOCK: if this peer substring already displayed, skip it
+        if (displayedPeerSubstrings.has(peerSubstring)) {
+            console.warn(`[Dedupe] Skipping duplicate peer display: ${peerSubstring}... (already shown as ${source})`);
+            continue;
+        }
+        
+        displayedPeerSubstrings.add(peerSubstring);
         const peerItem = document.createElement('div');
         peerItem.className = 'peer-item';
-        peerItem.textContent = peerId.substring(0, 8) + '...';
+        peerItem.innerHTML = `<span style="color: #64748b; font-size: 11px;">[${source}]</span> ${peerSubstring}...`;
         peerList.appendChild(peerItem);
     }
 }
@@ -548,12 +666,7 @@ async function connectNostr() {
     try {
         // Only connect to Nostr if enabled
         if (nostrEnabled) {
-            const relayUrlRaw = document.getElementById('relayUrl').value.trim();
-            
-            if (!relayUrlRaw) {
-                log('Please enter a relay URL for Nostr', 'error');
-                return;
-            }
+            const relayUrlRaw = document.getElementById('relayUrl').value.trim() || DEFAULT_RELAYS.join(',');
             
             const relayCandidatesRaw = relayUrlRaw.toLowerCase() === 'auto'
                 ? DEFAULT_RELAYS
@@ -562,7 +675,7 @@ async function connectNostr() {
                         relayUrlRaw
                             .split(/[\s,]+/)
                             .map((s) => s.trim())
-                            .filter(Boolean)
+                            .filter((s) => s.startsWith('wss://') || s.startsWith('ws://'))
                     )
                 );
 
@@ -647,6 +760,8 @@ async function connectNostr() {
                 const peerId = from;
                 if (!peerId || peerId === myPeerId) return;
 
+                // Discovery no longer decides source; selection happens on connect
+
                 // Try to decrypt if encrypted (using unsea)
                 let decrypted = payload;
                 if (payload && payload.encrypted && payload.content && myKeyPair && myKeyPair.privateKey) {
@@ -671,6 +786,7 @@ async function connectNostr() {
                 // Use the existing peer list UI as a simple "seen peers" list
                 if (!peerConnections.has(peerId)) {
                     peerConnections.set(peerId, null);
+                    peerSources.set(peerId, 'Nostr'); // Mark as Nostr peer
                     updatePeerList();
                     log(`Peer seen: ${peerId.substring(0, 6)}...`, 'success');
                 }
@@ -963,8 +1079,10 @@ async function connectNostr() {
                 peerId: myPeerId,
                 onPeerDiscovered: ({ source, peerId: discoveredPeerId, peer, data }) => {
                     if (discoveredPeerId === myPeerId) return;
-                    
+                    const sourceLabel = source === 'tracker' ? 'Tracker' : source === 'gun' ? 'Gun' : 'Nostr';
                     log(`Peer discovered via ${source}: ${discoveredPeerId.substring(0, 6)}...`, 'info');
+                    // Track latest discovery source for labeling; selection happens on active connect
+                    peerSources.set(discoveredPeerId, sourceLabel);
                     
                     // Track discovered peer
                     if (!peerConnections.has(discoveredPeerId)) {
@@ -976,15 +1094,21 @@ async function connectNostr() {
                     if (source === 'tracker' && peer) {
                         attachTrackerPeer(discoveredPeerId, peer);
                     }
+                    
+                    // If from Gun, initiate WebRTC if we're the initiator
+                    if (source === 'gun' && shouldInitiateWith(discoveredPeerId)) {
+                        // Mark Gun peers as ready immediately (no probe needed)
+                        readyPeers.add(discoveredPeerId);
+                        initiateGunWebRTC(discoveredPeerId);
+                    }
                 },
                 onSignal: async ({ source, from, signal }) => {
-                    log(`Signal via ${source} from ${from.substring(0, 6)}...`, 'info');
+                    const peerId = from;
+                    log(`Signal via ${source} from ${peerId.substring(0, 6)}...`, 'info');
                     
-                    // Process Gun signals (fallback to Nostr if needed)
-                    if (source === 'gun') {
-                        // Handle Gun signaling as backup
-                        // The signal processing logic is similar to Nostr
-                        console.log('[Gun] Received signal:', signal.type);
+                    // Process Gun signals - establish WebRTC connections
+                    if (source === 'gun' && signal) {
+                        await handleGunSignal(peerId, signal);
                     }
                 }
             });
@@ -1000,10 +1124,11 @@ async function connectNostr() {
             
             // Initialize Gun for alternative signaling (if enabled)
             if (gunEnabled) {
-                hybridSignaling.initGun([
-                    'https://gun-manhattan.herokuapp.com/gun',
-                    'https://gun-us.herokuapp.com/gun'
-                ]);
+                try {
+                    await hybridSignaling.initGun();
+                } catch (err) {
+                    console.error('[Gun] Initialization error:', err);
+                }
             }
         }
         
@@ -1202,7 +1327,7 @@ async function createPeerConnection(peerId, shouldInitiate) {
         peerConnections.delete(peerId);
     }
 
-        log(`Creating peer connection with ${peerId.substring(0, 6)}... (shouldInitiate: ${shouldInitiate})`, 'info');
+    log(`Creating peer connection with ${peerId.substring(0, 6)}... (shouldInitiate: ${shouldInitiate})`, 'info');
 
     const pc = new RTCPeerConnection({
         iceServers: ICE_SERVERS,
@@ -1216,6 +1341,15 @@ async function createPeerConnection(peerId, shouldInitiate) {
     pc.onicecandidate = (event) => {
         if (!nostrClient && client && event.candidate) {
             client.sendIceCandidate(event.candidate, peerId);
+            return;
+        }
+
+        // Route ICE to Gun if Nostr is disabled but Gun is enabled
+        if (!nostrClient && gunEnabled && hybridSignaling && event.candidate) {
+            hybridSignaling.sendGunSignal(peerId, {
+                type: 'ice',
+                candidate: event.candidate.toJSON?.() || event.candidate
+            });
             return;
         }
 
@@ -1265,11 +1399,19 @@ async function createPeerConnection(peerId, shouldInitiate) {
     };
 
     if (shouldInitiate) {
-        const dc = pc.createDataChannel('chat');
-        setupDataChannel(peerId, dc);
+        // Only create data channel if we don't have one yet
+        if (!dataChannels.has(peerId)) {
+            const dc = pc.createDataChannel('chat');
+            setupDataChannel(peerId, dc);
+        } else {
+            log(`Data channel already exists for ${peerId.substring(0, 6)}, reusing`, 'info');
+        }
         
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        
+        initiatedPeers.add(peerId); // Mark as initiated
+        
         if (nostrClient) {
             try {
                 await sendSignal(peerId, { type: 'signal-offer', sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
@@ -1288,8 +1430,17 @@ async function createPeerConnection(peerId, shouldInitiate) {
 }
 
 function setupDataChannel(peerId, dataChannel) {
+    // Avoid duplicate data channel setup
+    if (dataChannels.has(peerId)) {
+        log(`Data channel already exists for ${peerId.substring(0, 6)}, skipping duplicate`, 'warning');
+        return;
+    }
+    
     dataChannel.onopen = () => {
-            log(`Data channel open with ${peerId.substring(0, 6)}...`, 'success');
+        log(`Data channel open with ${peerId.substring(0, 6)}...`, 'success');
+        rtcConnectedAt.set(peerId, Date.now());
+        const chosen = peerSources.get(peerId) || 'Nostr';
+        setPreferredSource(peerId, chosen);
     };
 
     dataChannel.onmessage = (event) => {
@@ -1309,6 +1460,10 @@ function setupDataChannel(peerId, dataChannel) {
     dataChannel.onclose = () => {
             log(`Data channel closed with ${peerId.substring(0, 6)}...`, 'warning');
         dataChannels.delete(peerId);
+        rtcConnectedAt.delete(peerId);
+        // DO NOT delete peerPreferredSource - it must remain stable for the peer's lifetime
+        // This ensures "first source wins" is never violated, even if connections drop
+        updatePeerList();
     };
 
     dataChannels.set(peerId, dataChannel);
@@ -1382,8 +1537,115 @@ function displayChatMessage(message, sender, isLocal) {
     chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
+async function initiateGunWebRTC(peerId) {
+    try {
+        // If a preferred source already exists and it's not Gun, skip
+        const preferred = peerPreferredSource.get(peerId);
+        if (preferred && preferred !== 'Gun') {
+            console.log(`[Select] Skipping Gun connect; preferred is ${preferred} for ${peerId.substring(0, 8)}`);
+            return;
+        }
+        
+        // Skip if we've already initiated with this peer via any method
+        if (initiatedPeers.has(peerId)) {
+            log(`Already initiated connection with ${peerId.substring(0, 6)}, skipping Gun offer`, 'info');
+            return;
+        }
+        
+        log(`Initiating Gun WebRTC with ${peerId.substring(0, 6)}...`, 'info');
+        
+        // Create peer connection WITHOUT shouldInitiate (to avoid Nostr/tracker offer send)
+        let pc = peerConnections.get(peerId);
+        if (!pc || !(pc instanceof RTCPeerConnection)) {
+            pc = await createPeerConnection(peerId, false); // false = don't initiate via Nostr
+        }
+        
+        if (!pc) {
+            log(`Cannot initiate Gun WebRTC - peer connection failed`, 'warning');
+            return;
+        }
+        
+        // Skip if data channel already exists
+        if (dataChannels.has(peerId)) {
+            log(`Data channel already exists for ${peerId.substring(0, 6)}, skipping Gun offer`, 'info');
+            return;
+        }
+        
+        // Create data channel
+        const dataChannel = pc.createDataChannel('chat');
+        setupDataChannel(peerId, dataChannel);
+        
+        // Create and send offer via Gun
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        
+        initiatedPeers.add(peerId); // Mark as initiated
+        
+        if (hybridSignaling) {
+            hybridSignaling.sendGunSignal(peerId, {
+                type: 'offer',
+                sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp }
+            });
+            log(`Sent Gun offer to ${peerId.substring(0, 6)}...`, 'success');
+        }
+    } catch (err) {
+        log(`Gun WebRTC initiation error: ${err?.message || err}`, 'error');
+    }
+}
+
+async function handleGunSignal(peerId, signal) {
+    try {
+        if (signal.type === 'offer' && signal.sdp) {
+            log(`Received Gun offer from ${peerId.substring(0, 6)}...`, 'info');
+            let pc = await ensurePeerConnection(peerId);
+            if (!pc) {
+                pc = await resetPeerConnection(peerId);
+            }
+            if (!(pc instanceof RTCPeerConnection)) return;
+
+            await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+            await flushPendingIce(peerId);
+            
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            
+            // Send answer via Gun
+            if (hybridSignaling) {
+                hybridSignaling.sendGunSignal(peerId, {
+                    type: 'answer',
+                    sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp }
+                });
+                log(`Sent Gun answer to ${peerId.substring(0, 6)}...`, 'success');
+            }
+        } else if (signal.type === 'answer' && signal.sdp) {
+            log(`Received Gun answer from ${peerId.substring(0, 6)}...`, 'info');
+            const pc = peerConnections.get(peerId);
+            if (pc instanceof RTCPeerConnection) {
+                await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+                await flushPendingIce(peerId);
+                log(`Applied remote answer for ${peerId.substring(0, 6)}...`, 'success');
+            } else {
+                log(`No existing peer connection for answer from ${peerId.substring(0, 6)}...`, 'warning');
+            }
+        } else if (signal.type === 'ice' && signal.candidate) {
+            log(`Received Gun ICE from ${peerId.substring(0, 6)}...`, 'info');
+            await addIceCandidateSafely(peerId, signal.candidate);
+        }
+    } catch (err) {
+        log(`Gun signal error: ${err?.message || err}`, 'error');
+    }
+}
+
 function attachTrackerPeer(peerId, peer) {
     if (!peer) return;
+    
+    // First source wins: if source exists and is not Tracker, ignore
+    const existingSource = peerSources.get(peerId);
+    if (existingSource && existingSource !== 'Tracker') {
+        console.log(`[Dedupe] Skipping Tracker attach, first source is ${existingSource} for ${peerId.substring(0, 8)}`);
+        peer.destroy?.();
+        return;
+    }
     
     // Avoid attaching same peer multiple times (memory leak)
     if (trackerPeers.has(peerId)) {
@@ -1396,7 +1658,8 @@ function attachTrackerPeer(peerId, peer) {
 
     peer.on('connect', () => {
         log(`Tracker peer connected: ${peerId.substring(0, 6)}...`, 'success');
-        updatePeerList();
+        trackerConnectedAt.set(peerId, Date.now());
+        setPreferredSource(peerId, 'Tracker');
     });
 
     peer.on('data', (data) => {
@@ -1410,6 +1673,9 @@ function attachTrackerPeer(peerId, peer) {
 
     peer.on('close', () => {
         trackerPeers.delete(peerId);
+        trackerConnectedAt.delete(peerId);
+        // DO NOT delete peerPreferredSource - it must remain stable for the peer's lifetime
+        // This ensures "first source wins" is never violated, even if connections drop
         updatePeerList();
         log(`Tracker peer closed: ${peerId.substring(0, 6)}...`, 'warning');
     });

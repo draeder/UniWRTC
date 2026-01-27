@@ -12,6 +12,11 @@ import Client from 'bittorrent-tracker';
 import { Buffer } from 'buffer';
 import process from 'process';
 
+// Known active Gun relays - curated list of community-maintained servers
+const ACTIVE_GUN_RELAYS = [
+  'https://relay.peer.ooo/gun'
+];
+
 // Ensure Buffer exists in browser
 if (!globalThis.Buffer) {
   globalThis.Buffer = Buffer;
@@ -99,59 +104,86 @@ export class HybridSignaling {
   }
 
   /**
-   * Initialize Gun for alternative WebRTC signaling
+   * Initialize Gun for alternative WebRTC signaling with active relays
    */
-  initGun(peers = ['https://gun-manhattan.herokuapp.com/gun']) {
+  async initGun() {
     if (!this.roomId) {
       console.warn('[Gun] No room ID specified');
       return;
     }
 
-    this.gun = Gun(peers);
-    const room = this.gun.get(`uniwrtc-${this.roomId}`);
-    
-    // Listen for signals in this room
-    room.get('signals').map().on((signal, peerId) => {
-      if (!signal || peerId === this.peerId) return;
+    try {
+      // Use curated list of active Gun relays
+      console.log('[Gun] Using active relay list:', ACTIVE_GUN_RELAYS.length, 'relays');
       
-      try {
-        const data = typeof signal === 'string' ? JSON.parse(signal) : signal;
+      this.gun = Gun(ACTIVE_GUN_RELAYS);
+      const room = this.gun.get(`uniwrtc-${this.roomId}`);
+      
+      // Listen for signals in this room
+      room.get('signals').map().on((signal, peerId) => {
+        if (!signal || peerId === this.peerId) return;
         
-        if (data.to === this.peerId || !data.to) {
-          console.log('[Gun] Received signal from:', peerId.substring(0, 8));
-          this.onSignal({
+        try {
+          const data = typeof signal === 'string' ? JSON.parse(signal) : signal;
+          
+          if (data.to === this.peerId || !data.to) {
+            console.log('[Gun] Received signal from:', peerId.substring(0, 8));
+            this.onSignal({
+              source: 'gun',
+              from: peerId,
+              signal: data
+            });
+          }
+        } catch (err) {
+          console.error('[Gun] Parse error:', err);
+        }
+      });
+
+      // Announce presence
+      room.get('peers').get(this.peerId).put({
+        id: this.peerId,
+        timestamp: Date.now()
+      });
+
+      // Listen for peers - filter out stale entries
+      room.get('peers').map().on((peerData, gunKey) => {
+        if (!peerData || !peerData.id) return;
+        
+        const peerId = peerData.id;
+        if (peerId === this.peerId) return;
+        
+        // Filter out peers older than 2 minutes (likely offline)
+        const peerAge = Date.now() - (peerData.timestamp || 0);
+        const MAX_PEER_AGE = 2 * 60 * 1000; // 2 minutes
+        
+        if (peerAge > MAX_PEER_AGE) {
+          console.log('[Gun] Ignoring stale peer:', peerId.substring(0, 8), `(${Math.floor(peerAge / 1000)}s old)`);
+          return;
+        }
+        
+        if (!this.gunPeers.has(peerId)) {
+          console.log('[Gun] Discovered peer:', peerId.substring(0, 8));
+          this.gunPeers.set(peerId, peerData);
+          this.onPeerDiscovered({
             source: 'gun',
-            from: peerId,
-            signal: data
+            peerId,
+            data: peerData
           });
         }
-      } catch (err) {
-        console.error('[Gun] Parse error:', err);
-      }
-    });
+      });
 
-    // Announce presence
-    room.get('peers').get(this.peerId).put({
-      id: this.peerId,
-      timestamp: Date.now()
-    });
-
-    // Listen for peers
-    room.get('peers').map().on((peerData, peerId) => {
-      if (!peerData || peerId === this.peerId) return;
-      
-      if (!this.gunPeers.has(peerId)) {
-        console.log('[Gun] Discovered peer:', peerId.substring(0, 8));
-        this.gunPeers.set(peerId, peerData);
-        this.onPeerDiscovered({
-          source: 'gun',
-          peerId,
-          data: peerData
+      // Heartbeat: Update presence every 30 seconds
+      this.gunHeartbeat = setInterval(() => {
+        room.get('peers').get(this.peerId).put({
+          id: this.peerId,
+          timestamp: Date.now()
         });
-      }
-    });
+      }, 30000);
 
-    console.log('[Gun] Initialized signaling for room:', this.roomId);
+      console.log('[Gun] Initialized signaling for room:', this.roomId);
+    } catch (err) {
+      console.error('[Gun] Init error:', err);
+    }
   }
 
   /**
@@ -226,10 +258,14 @@ export class HybridSignaling {
       this.trackerClient = null;
     }
     
+    if (this.gunHeartbeat) {
+      clearInterval(this.gunHeartbeat);
+      this.gunHeartbeat = null;
+    }
+    
     this.discoveredPeers.clear();
     this.gunPeers.clear();
     
-    // Gun doesn't need explicit cleanup
     console.log('[Hybrid] Signaling shutdown');
   }
 }
