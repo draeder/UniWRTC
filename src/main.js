@@ -1464,7 +1464,7 @@ async function createPeerConnection(peerId, shouldInitiate) {
 
     pc.ondatachannel = (event) => {
             log(`Received data channel from ${peerId.substring(0, 6)}`, 'info');
-        const hint = lastSignalSource.get(peerId) || peerSources.get(peerId);
+        const hint = lastSignalSource.get(peerId) || null;
         setupDataChannel(peerId, event.channel, hint);
     };
 
@@ -1472,7 +1472,7 @@ async function createPeerConnection(peerId, shouldInitiate) {
         // Only create data channel if we don't have one yet
         if (!dataChannels.has(peerId)) {
             const dc = pc.createDataChannel('chat');
-            const hint = lastSignalSource.get(peerId) || peerSources.get(peerId) || 'Nostr';
+            const hint = lastSignalSource.get(peerId) || 'Nostr';
             setupDataChannel(peerId, dc, hint);
         } else {
             log(`Data channel already exists for ${peerId.substring(0, 6)}, reusing`, 'info');
@@ -1510,9 +1510,8 @@ function setupDataChannel(peerId, dataChannel, sourceHint) {
     dataChannel.onopen = () => {
         log(`Data channel open with ${peerId.substring(0, 6)}...`, 'success');
         rtcConnectedAt.set(peerId, Date.now());
-        const discovered = peerSources.get(peerId);
         const lastSignal = lastSignalSource.get(peerId);
-        const chosen = sourceHint || lastSignal || discovered || 'Nostr';
+        const chosen = sourceHint || lastSignal || 'Nostr';
         if (!peerSources.has(peerId) && chosen) {
             peerSources.set(peerId, chosen);
         }
@@ -1735,8 +1734,10 @@ function attachTrackerPeer(peerId, peer) {
     peer.on('connect', () => {
         log(`Tracker peer connected: ${peerId.substring(0, 6)}...`, 'success');
         trackerConnectedAt.set(peerId, Date.now());
-        // Respect first-discovered source; only default to Tracker if none recorded
-        const chosen = peerSources.get(peerId) || 'Tracker';
+        const chosen = 'Tracker';
+        if (!peerSources.has(peerId)) {
+            peerSources.set(peerId, chosen);
+        }
         setPreferredSource(peerId, chosen);
     });
 
