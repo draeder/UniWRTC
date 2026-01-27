@@ -159,8 +159,8 @@ export class HybridSignaling {
         
         if (peerAge > MAX_PEER_AGE) {
           console.log('[Gun] Ignoring stale peer:', peerId.substring(0, 8), `(${Math.floor(peerAge / 1000)}s old) - removing from Gun`);
-          // CRITICAL: Delete the stale peer entry from Gun to prevent it from being rediscovered
-          room.get('peers').get(peerId).remove();
+          // CRITICAL: Delete the stale peer entry from Gun using put(null)
+          room.get('peers').get(peerId).put(null);
           this.gunPeers.delete(peerId);
           return;
         }
