@@ -444,15 +444,7 @@ function updatePeerList() {
         displayedSources.add(source);
     }
 
-    // Show accurate URLs for the transports actually displayed
-    const relayUrlInput = document.getElementById('relayUrl');
-    if (relayUrlInput && displayedSources.size > 0) {
-        const urlParts = [];
-        if (displayedSources.has('Nostr')) urlParts.push(...DEFAULT_RELAYS);
-        if (displayedSources.has('Tracker')) urlParts.push(...DEFAULT_TRACKERS);
-        if (displayedSources.has('Gun')) urlParts.push(DEFAULT_GUN_RELAY);
-        relayUrlInput.value = urlParts.join(', ');
-    }
+    // Don't touch URL field - let user control it
 }
 
 window.connect = async function() {
